@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 python -m huey.bin.huey_consumer app.queue.huey -w 1 &
