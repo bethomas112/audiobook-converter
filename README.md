@@ -86,7 +86,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `ARCHIVE_RETENTION_DAYS` | Auto-purge window for archived originals; unset = keep forever | unset |
 | `AUTO_START_PROCESSING` | Skip the manual "confirm to start" step | `false` |
 | `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match | `false` |
-| `MIN_BITRATE_KBPS` | Floor for MP3→AAC transcode bitrate | `128` |
+| `MIN_BITRATE_KBPS` | Informational floor (kbps); sources below it still convert (always at their own bitrate), just flagged in the log | `128` |
 | `METADATA_SOURCE` | Named for future alternate sources; only one exists today | `audnexus` |
 | `SILENCE_THRESHOLD_DB` | Noise floor for silence-based chapter detection | `-30dB` |
 | `SILENCE_MIN_DURATION_SEC` | Minimum quiet-gap length to count as a chapter break | `1.5` |

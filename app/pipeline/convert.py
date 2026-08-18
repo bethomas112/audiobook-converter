@@ -24,10 +24,18 @@ def convert_mp3_to_m4b(source_files: list[Path], work_path: Path, log) -> Path:
     if len(set(bitrates)) > 1:
         log(f"Source files have inconsistent bitrates {bitrates} kbps; using the highest ({max_bitrate}).")
 
-    target_bitrate = max(max_bitrate, config.MIN_BITRATE_KBPS)
-    if target_bitrate > max_bitrate:
-        log(f"Source bitrate ({max_bitrate}kbps) is below the configured floor; encoding at {target_bitrate}kbps.")
+    # Always encode at the source's own bitrate. Re-encoding higher than the
+    # source can't recover detail that isn't there - it only wastes space.
+    # MIN_BITRATE_KBPS is informational only: a below-floor source is still
+    # worth flagging, just not worth "fixing" with a wasteful re-encode.
+    if max_bitrate < config.MIN_BITRATE_KBPS:
+        log(
+            f"Source bitrate ({max_bitrate}kbps) is below the configured "
+            f"{config.MIN_BITRATE_KBPS}kbps floor. Encoding at the source's own "
+            f"{max_bitrate}kbps anyway - encoding higher can't add back quality "
+            "that isn't there."
+        )
 
-    log(f"Transcoding {len(source_files)} source file(s) to AAC at {target_bitrate}kbps.")
-    ffutil.transcode_to_aac_m4b(source_files, work_path, target_bitrate)
+    log(f"Transcoding {len(source_files)} source file(s) to AAC at {max_bitrate}kbps (matching source).")
+    ffutil.transcode_to_aac_m4b(source_files, work_path, max_bitrate)
     return work_path
