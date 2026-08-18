@@ -18,7 +18,13 @@ def passthrough_m4b(source_file: Path, work_path: Path) -> Path:
     return work_path
 
 
-def convert_mp3_to_m4b(source_files: list[Path], work_path: Path, log) -> Path:
+def convert_mp3_to_m4b(
+    source_files: list[Path],
+    work_path: Path,
+    log,
+    on_progress=None,
+    should_cancel=None,
+) -> Path:
     bitrates = [ffutil.get_audio_bitrate_kbps(f) for f in source_files]
     max_bitrate = max(bitrates)
     if len(set(bitrates)) > 1:
@@ -36,6 +42,15 @@ def convert_mp3_to_m4b(source_files: list[Path], work_path: Path, log) -> Path:
             "that isn't there."
         )
 
+    total_duration_sec = sum(ffutil.get_duration_sec(f) for f in source_files)
+
     log(f"Transcoding {len(source_files)} source file(s) to AAC at {max_bitrate}kbps (matching source).")
-    ffutil.transcode_to_aac_m4b(source_files, work_path, max_bitrate)
+    ffutil.transcode_to_aac_m4b(
+        source_files,
+        work_path,
+        max_bitrate,
+        total_duration_sec=total_duration_sec,
+        on_progress=on_progress,
+        should_cancel=should_cancel,
+    )
     return work_path

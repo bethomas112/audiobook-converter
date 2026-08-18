@@ -1,11 +1,16 @@
 """Thin wrappers around ffmpeg/ffprobe subprocess calls."""
 import json
+import re
 import subprocess
 from pathlib import Path
 
 
 class FFError(RuntimeError):
     pass
+
+
+class CancelledError(RuntimeError):
+    """Raised when a caller-supplied should_cancel() check trips mid-run."""
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -74,7 +79,50 @@ def run_silencedetect(path: Path, threshold_db: str, min_duration_sec: float) ->
     return result.stderr
 
 
-def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbps: int):
+_OUT_TIME_RE = re.compile(r"out_time=(\d+):(\d+):([\d.]+)")
+
+
+def _run_with_progress(cmd: list[str], total_duration_sec, on_progress, should_cancel):
+    """Run an ffmpeg command (already carrying -progress pipe:1), streaming
+    progress as it goes rather than blocking until the whole thing finishes.
+
+    on_progress(pct) is called (at most) whenever ffmpeg reports a new
+    out_time; should_cancel() is polled on every progress line, and a True
+    result terminates the subprocess and raises CancelledError.
+    """
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    try:
+        for line in proc.stdout:
+            if should_cancel is not None and should_cancel():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise CancelledError("Conversion cancelled")
+            if on_progress is not None and total_duration_sec:
+                match = _OUT_TIME_RE.search(line)
+                if match:
+                    hours, minutes, seconds = match.groups()
+                    out_time_sec = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                    pct = max(0, min(99, round(out_time_sec / total_duration_sec * 100)))
+                    on_progress(pct)
+    finally:
+        stderr_output = proc.stderr.read() if proc.stderr else ""
+        proc.wait()
+
+    if proc.returncode != 0:
+        raise FFError(f"ffmpeg failed: {stderr_output.strip()}")
+
+
+def transcode_to_aac_m4b(
+    input_paths: list[Path],
+    output_path: Path,
+    bitrate_kbps: int,
+    total_duration_sec: float | None = None,
+    on_progress=None,
+    should_cancel=None,
+):
     """Concatenate (if multiple) and transcode MP3 source(s) to AAC in an M4B container.
 
     Source MP3s often carry a per-track embedded cover image (an ID3 APIC
@@ -83,6 +131,10 @@ def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbp
     absent across a multi-file source - can't leak into the muxed output
     or confuse the concat demuxer's stream matching. Cover art is added
     properly afterward, from the confirmed metadata match, in tag.py.
+
+    total_duration_sec/on_progress/should_cancel are all optional together:
+    pass them to get live progress reporting and cooperative cancellation
+    (used by the job dispatcher); omit them for a plain, silent run.
     """
     if len(input_paths) == 1:
         cmd = [
@@ -90,12 +142,11 @@ def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbp
             "-i", str(input_paths[0]),
             "-map", "0:a",
             "-c:a", "aac", "-b:a", f"{bitrate_kbps}k",
+            "-progress", "pipe:1", "-nostats",
             "-f", "mp4",
             str(output_path),
         ]
-        result = _run(cmd)
-        if result.returncode != 0:
-            raise FFError(f"ffmpeg transcode failed: {result.stderr.strip()}")
+        _run_with_progress(cmd, total_duration_sec, on_progress, should_cancel)
         return
 
     list_file = output_path.with_suffix(".concat.txt")
@@ -110,12 +161,11 @@ def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbp
             "-i", str(list_file),
             "-map", "0:a",
             "-c:a", "aac", "-b:a", f"{bitrate_kbps}k",
+            "-progress", "pipe:1", "-nostats",
             "-f", "mp4",
             str(output_path),
         ]
-        result = _run(cmd)
-        if result.returncode != 0:
-            raise FFError(f"ffmpeg concat+transcode failed: {result.stderr.strip()}")
+        _run_with_progress(cmd, total_duration_sec, on_progress, should_cancel)
     finally:
         list_file.unlink(missing_ok=True)
 

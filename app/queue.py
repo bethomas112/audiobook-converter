@@ -35,11 +35,16 @@ def start_job(job_id: int):
         job.candidates = candidates
         job.append_log(f"Found {len(candidates)} metadata candidate(s).")
 
+        top_asin = candidates[0].get("asin") if candidates else None
+        if top_asin:
+            # A preview only - shown during review so the user can see roughly
+            # what will be written before confirming. Whichever candidate they
+            # actually confirm is what process_job resolves chapters against.
+            job.chapters_preview = metadata.get_chapters(top_asin)
+
         if config.AUTO_CONFIRM_METADATA and candidates:
-            job.selected_metadata = candidates[0]
-            job.status = Job.STATUS_PROCESSING
             job.touch_and_save()
-            process_job(job_id)
+            confirm_metadata(job.id, candidates[0])
         else:
             job.status = Job.STATUS_AWAITING_METADATA_CONFIRM
             job.touch_and_save()
@@ -49,12 +54,142 @@ def start_job(job_id: int):
         job.append_log(f"Failed during detection/metadata search: {e}")
 
 
+def _next_queue_order() -> int:
+    highest = (
+        Job.select(Job.queue_order)
+        .where(Job.queue_order.is_null(False))
+        .order_by(Job.queue_order.desc())
+        .first()
+    )
+    return (highest.queue_order + 1) if highest else 1
+
+
+def confirm_metadata(job_id: int, selected_metadata: dict):
+    """Saves the confirmed match and puts the job at the back of the
+    conversion queue. Doesn't start converting by itself - dispatch_next()
+    decides that, so this is safe to call for any number of jobs in a row
+    without them all starting at once.
+    """
+    job = Job.get_by_id(job_id)
+    job.selected_metadata = selected_metadata
+    job.status = Job.STATUS_READY
+    job.queue_order = _next_queue_order()
+    job.touch_and_save()
+    dispatch_next()
+
+
+def requeue_job(job_id: int):
+    """Puts a cancelled job back at the end of the conversion queue, reusing
+    its already-confirmed metadata rather than searching again.
+    """
+    job = Job.get_by_id(job_id)
+    job.status = Job.STATUS_READY
+    job.queue_order = _next_queue_order()
+    job.cancel_requested = False
+    job.touch_and_save()
+    dispatch_next()
+
+
+def dispatch_next():
+    """If nothing is currently converting, start the next ready job (lowest
+    queue_order first). Safe to call any time from either process (after a
+    confirm, a cancel, or a job finishing) - a no-op if something's already
+    running or nothing is waiting. Nothing is ever handed to Huey before
+    this actually picks it, which is what makes reordering a plain data
+    update instead of a queue-system operation.
+    """
+    if Job.select().where(Job.status == Job.STATUS_PROCESSING).exists():
+        return
+    next_job = (
+        Job.select()
+        .where(Job.status == Job.STATUS_READY)
+        .order_by(Job.queue_order.asc())
+        .first()
+    )
+    if next_job is None:
+        return
+    next_job.status = Job.STATUS_PROCESSING
+    next_job.cancel_requested = False
+    next_job.progress_pct = 0
+    next_job.progress_stage = None
+    next_job.touch_and_save()
+    process_job(next_job.id)
+
+
+def cancel_job(job_id: int):
+    """Cancels a job that's ready (not yet started) or actively converting.
+
+    A ready job is simply marked cancelled - it was never hand off to Huey,
+    since dispatch_next() only does that the moment a job actually starts.
+    An actively-converting job can't be stopped from here directly (it's
+    running in the worker process); instead this sets cancel_requested,
+    which the running conversion's own progress loop polls and acts on.
+    """
+    job = Job.get_by_id(job_id)
+    if job.status == Job.STATUS_READY:
+        job.status = Job.STATUS_CANCELLED
+        job.queue_order = None
+        job.append_log("Cancelled before conversion started.")
+    elif job.status == Job.STATUS_PROCESSING:
+        job.cancel_requested = True
+        job.touch_and_save()
+    else:
+        return
+
+
+def reorder_queue(job_id: int, direction: str):
+    """Moves a not-yet-started job up or down one place among the other
+    ready jobs. The currently-processing job (if any) isn't part of this -
+    it's already running and can't be reordered without cancelling it.
+    """
+    ready_jobs = list(
+        Job.select().where(Job.status == Job.STATUS_READY).order_by(Job.queue_order.asc())
+    )
+    ids = [j.id for j in ready_jobs]
+    if job_id not in ids:
+        return
+    idx = ids.index(job_id)
+    swap_with = idx - 1 if direction == "up" else idx + 1
+    if swap_with < 0 or swap_with >= len(ids):
+        return
+    ready_jobs[idx].queue_order, ready_jobs[swap_with].queue_order = (
+        ready_jobs[swap_with].queue_order,
+        ready_jobs[idx].queue_order,
+    )
+    ready_jobs[idx].save()
+    ready_jobs[swap_with].save()
+
+
+def remove_job(job_id: int):
+    """Hides a job from the active queue views without deleting its row or
+    touching its source file - see Job.dismissed for why deleting the row
+    outright would be a real bug (the watcher would re-detect the source).
+    """
+    job = Job.get_by_id(job_id)
+    job.dismissed = True
+    job.touch_and_save()
+
+
 @huey.task()
 def process_job(job_id: int):
-    """Runs conversion, chapters, tagging, output placement, and archival."""
+    """Runs conversion, chapters, tagging, output placement, and archival
+    for the job the dispatcher just started. dispatch_next() enforces that
+    only one of these ever runs at a time.
+    """
     job = Job.get_by_id(job_id)
-    job.status = Job.STATUS_PROCESSING
-    job.touch_and_save()
+    last_pct = -1
+
+    def on_progress(pct: int):
+        nonlocal last_pct
+        if pct == last_pct:
+            return
+        last_pct = pct
+        job.save_progress(pct)
+
+    def should_cancel() -> bool:
+        # Re-read from the DB every time: cancellation is requested from the
+        # web process, which this worker process can only see via SQLite.
+        return bool(Job.select(Job.cancel_requested).where(Job.id == job_id).scalar())
 
     try:
         meta = job.selected_metadata
@@ -65,13 +200,23 @@ def process_job(job_id: int):
         work_path = config.WORK_DIR / f"job_{job.id}.m4b"
 
         if job.source_type == "m4b_single":
+            job.save_progress(10, stage="Copying M4B (no re-encode)")
             convert.passthrough_m4b(audio_files[0], work_path)
             has_embedded = bool(ffutil.get_embedded_chapters(work_path))
             job.append_log("M4B source passed through untouched (no re-encode).")
+            job.save_progress(90)
         else:
-            convert.convert_mp3_to_m4b(audio_files, work_path, log=job.append_log)
+            job.save_progress(0, stage="Transcoding audio")
+            convert.convert_mp3_to_m4b(
+                audio_files,
+                work_path,
+                log=job.append_log,
+                on_progress=on_progress,
+                should_cancel=should_cancel,
+            )
             has_embedded = False
 
+        job.save_progress(92, stage="Resolving chapters")
         resolved_chapters = chapters.resolve_chapters(
             job.source_type, audio_files, work_path, has_embedded, meta.get("asin")
         )
@@ -81,9 +226,11 @@ def process_job(job_id: int):
         else:
             job.append_log("Left source's embedded chapters untouched.")
 
+        job.save_progress(96, stage="Applying tags")
         tag.apply_tags(work_path, meta)
         job.append_log("Applied metadata tags and cover art.")
 
+        job.save_progress(98, stage="Moving to output")
         dest = output.place_output(work_path, meta)
         job.destination_path = str(dest)
         job.append_log(f"Placed finished audiobook at {dest}.")
@@ -91,11 +238,26 @@ def process_job(job_id: int):
         archive.handle_source_cleanup(Path(job.source_path), log=job.append_log)
 
         job.status = Job.STATUS_DONE
+        job.queue_order = None
+        job.progress_pct = 100
+        job.progress_stage = None
+        job.touch_and_save()
+    except ffutil.CancelledError:
+        work_path.unlink(missing_ok=True)
+        job.status = Job.STATUS_CANCELLED
+        job.queue_order = None
+        job.progress_stage = None
+        job.cancel_requested = False
+        job.append_log("Conversion cancelled before it finished. Nothing was written.")
         job.touch_and_save()
     except Exception as e:  # noqa: BLE001 - job failures must not crash the worker
         job.status = Job.STATUS_FAILED
         job.error_message = str(e)
+        job.progress_stage = None
         job.append_log(f"Failed during processing: {e}")
+        job.touch_and_save()
+    finally:
+        dispatch_next()
 
 
 @huey.periodic_task(crontab(hour="3", minute="0"))
