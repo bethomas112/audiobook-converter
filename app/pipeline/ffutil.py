@@ -74,35 +74,21 @@ def run_silencedetect(path: Path, threshold_db: str, min_duration_sec: float) ->
     return result.stderr
 
 
-def concat_audio(input_paths: list[Path], output_path: Path):
-    """Concatenate audio files (same codec/format) via ffmpeg's concat demuxer."""
-    list_file = output_path.with_suffix(".concat.txt")
-    with open(list_file, "w") as f:
-        for p in input_paths:
-            escaped = str(p).replace("'", "'\\''")
-            f.write(f"file '{escaped}'\n")
-    try:
-        result = _run(
-            [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", str(list_file),
-                "-c", "copy",
-                str(output_path),
-            ]
-        )
-        if result.returncode != 0:
-            raise FFError(f"ffmpeg concat failed: {result.stderr.strip()}")
-    finally:
-        list_file.unlink(missing_ok=True)
-
-
 def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbps: int):
-    """Concatenate (if multiple) and transcode MP3 source(s) to AAC in an M4B container."""
+    """Concatenate (if multiple) and transcode MP3 source(s) to AAC in an M4B container.
+
+    Source MP3s often carry a per-track embedded cover image (an ID3 APIC
+    frame, which ffprobe reports as a "video" stream). -map 0:a restricts
+    output to audio only, so those per-track images - inconsistent or
+    absent across a multi-file source - can't leak into the muxed output
+    or confuse the concat demuxer's stream matching. Cover art is added
+    properly afterward, from the confirmed metadata match, in tag.py.
+    """
     if len(input_paths) == 1:
         cmd = [
             "ffmpeg", "-y",
             "-i", str(input_paths[0]),
+            "-map", "0:a",
             "-c:a", "aac", "-b:a", f"{bitrate_kbps}k",
             "-f", "mp4",
             str(output_path),
@@ -122,6 +108,7 @@ def transcode_to_aac_m4b(input_paths: list[Path], output_path: Path, bitrate_kbp
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(list_file),
+            "-map", "0:a",
             "-c:a", "aac", "-b:a", f"{bitrate_kbps}k",
             "-f", "mp4",
             str(output_path),

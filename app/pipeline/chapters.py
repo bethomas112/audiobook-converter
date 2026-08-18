@@ -30,12 +30,25 @@ def resolve_chapters(
     if asin:
         audnexus_chapters = metadata.get_chapters(asin)
         if audnexus_chapters:
-            return audnexus_chapters
+            return _clamp_to_duration(audnexus_chapters, ffutil.get_duration_sec(output_path))
 
     if source_type == "mp3_multi":
         return _chapters_from_source_boundaries(source_audio_files)
 
     return _chapters_from_silence_detection(output_path)
+
+
+def _clamp_to_duration(chapters: list[dict], duration_sec: float) -> list[dict]:
+    """audnexus's chapter timestamps are for Audible's own official release
+    and can run slightly past a given rip's actual duration (different
+    encode, trimmed silence, a different edition). Drop any chapter that
+    starts beyond the actual audio, and clamp the last remaining one's end
+    so we never write chapter metadata past the end of the file.
+    """
+    clamped = [c for c in chapters if c["start_sec"] < duration_sec]
+    if clamped and clamped[-1]["end_sec"] > duration_sec:
+        clamped[-1] = {**clamped[-1], "end_sec": duration_sec}
+    return clamped
 
 
 def _chapters_from_source_boundaries(source_audio_files: list[Path]) -> list[dict]:
