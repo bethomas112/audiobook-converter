@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 AUDIO_EXTENSIONS = {".mp3", ".m4b"}
-IGNORED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".txt", ".nfo", ".cue", ".log", ".ds_store"}
 
 
 class DetectionError(ValueError):

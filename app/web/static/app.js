@@ -5,17 +5,11 @@
   var currentPanelId = null;
   var knownStatuses = {}; // job id -> status, used to detect structural changes while polling
 
-  function csrfFreeHeaders() {
-    return {};
-  }
-
   function post(url, formData) {
-    return fetch(url, { method: "POST", body: formData || new FormData(), headers: csrfFreeHeaders() }).then(
-      function (res) {
-        if (!res.ok) throw new Error("Request failed: " + url);
-        return res;
-      }
-    );
+    return fetch(url, { method: "POST", body: formData || new FormData() }).then(function (res) {
+      if (!res.ok) throw new Error("Request failed: " + url);
+      return res;
+    });
   }
 
   function getHtml(url) {

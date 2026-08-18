@@ -1,5 +1,4 @@
-"""Chapter resolution, in priority order (see Section 2 step 8 of the
-design doc):
+"""Chapter resolution, in priority order:
 
   1. Embedded chapters already present in an M4B input -> left untouched,
      signalled here by returning None (caller must not modify chapters).
