@@ -1,0 +1,20 @@
+{% if processing_job %}
+{% set job = processing_job %}
+{% set meta = job.selected_metadata %}
+<button type="button" class="now-converting" id="nowConverting" data-jump-target="{{ job.id }}">
+  <span class="nc-fill" id="ncFill" style="width:{{ job.progress_pct }}%;"></span>
+  {% if meta and meta.cover_url %}
+  <span class="nc-cover"><img src="{{ meta.cover_url }}" alt=""></span>
+  {% else %}
+  <span class="nc-cover" style="background:{{ (meta.title if meta else job.title_guess)|cover_gradient }}; display:flex; align-items:center; justify-content:center; color:var(--ink); font-family:var(--font-display); font-style:italic;">{{ (meta.title if meta else job.title_guess)|monogram }}</span>
+  {% endif %}
+  <span class="nc-info">
+    <span class="nc-title">{{ meta.title if meta else job.title_guess }}</span>
+    <span class="nc-stage" id="ncStage">{{ job.progress_stage or '' }}</span>
+  </span>
+  <span class="nc-wave" id="ncWave"></span>
+  <span class="nc-pct" id="ncPct">{{ job.progress_pct }}%</span>
+</button>
+{% else %}
+<button type="button" class="now-converting" id="nowConverting" hidden></button>
+{% endif %}

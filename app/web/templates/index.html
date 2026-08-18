@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audiobook Converter</title>
+  <link rel="stylesheet" href="/static/fonts.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-main">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
+              <rect x="0" y="5" width="3" height="9" rx="1" fill="currentColor"/>
+              <rect x="6.5" y="0" width="3" height="14" rx="1" fill="currentColor"/>
+              <rect x="13" y="3" width="3" height="11" rx="1" fill="currentColor"/>
+            </svg>
+          </span>
+          <div class="brand-name">Audiobook Converter</div>
+        </div>
+        <div class="live-pill" id="livePill"><span class="live-dot"></span> <span id="livePillText">{{ converting|length }} converting/queued &middot; {{ needs_input|length }} need input</span></div>
+      </div>
+      {% include "_now_converting.html" %}
+    </header>
+
+    <div class="layout">
+      {% include "_rail.html" %}
+
+      <main class="detail" id="detail">
+        {% if active_job_id %}
+          {% set job = active_job %}
+          {% include "_panel.html" %}
+        {% else %}
+        <div class="card">
+          <p class="waiting-note">Nothing here yet. Drop an audiobook into the inbox folder to get started.</p>
+        </div>
+        {% endif %}
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

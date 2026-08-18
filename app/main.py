@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.db import init_db
 from app.watcher import start_watcher
@@ -21,5 +22,6 @@ async def lifespan(app: FastAPI):
     observer.join(timeout=5)
 
 
-app = FastAPI(title="Audiobook Pipeline", lifespan=lifespan)
+app = FastAPI(title="Audiobook Converter", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 app.include_router(router)

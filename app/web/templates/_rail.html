@@ -1,0 +1,34 @@
+<aside class="rail" id="rail">
+  <div class="rail-section">
+    <button type="button" class="rail-header" aria-expanded="true" data-collapse-target="needsInputList">
+      <span class="rail-header-label"><span class="rail-chevron" aria-hidden="true">&#9662;</span>Needs Input</span>
+      <span class="rail-count">{{ needs_input|length }}</span>
+    </button>
+    <ul class="queue-list" id="needsInputList">
+      {% for job in needs_input %}{% include "_queue_item.html" %}{% endfor %}
+      {% if not needs_input %}<li class="rail-empty">Nothing needs your attention.</li>{% endif %}
+    </ul>
+  </div>
+
+  <div class="rail-section">
+    <button type="button" class="rail-header" aria-expanded="true" data-collapse-target="convertingList">
+      <span class="rail-header-label"><span class="rail-chevron" aria-hidden="true">&#9662;</span>Converting</span>
+      <span class="rail-count">{{ converting|length }}</span>
+    </button>
+    <ul class="queue-list" id="convertingList">
+      {% for job in converting %}{% include "_queue_item.html" %}{% endfor %}
+      {% if not converting %}<li class="rail-empty">Nothing converting right now.</li>{% endif %}
+    </ul>
+  </div>
+
+  <div class="rail-section">
+    <button type="button" class="rail-header" aria-expanded="true" data-collapse-target="doneList">
+      <span class="rail-header-label"><span class="rail-chevron" aria-hidden="true">&#9662;</span>Done</span>
+      <span class="rail-count">{{ done|length }}</span>
+    </button>
+    <ul class="queue-list" id="doneList">
+      {% for job in done %}{% include "_queue_item.html" %}{% endfor %}
+      {% if not done %}<li class="rail-empty">Nothing finished yet.</li>{% endif %}
+    </ul>
+  </div>
+</aside>

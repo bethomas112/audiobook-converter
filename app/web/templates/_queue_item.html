@@ -1,0 +1,37 @@
+{% set meta = job.selected_metadata %}
+{% set preview_cover = meta.cover_url if meta and meta.cover_url else (job.candidates[0].cover_url if job.candidates else None) %}
+{% set title = (meta.title if meta and meta.title else job.title_guess) or job.source_path.split('/')[-1] %}
+{% set author = (meta.author if meta and meta.author else job.author_guess) or '' %}
+<li class="queue-item{% if job.id == active_job_id %} active{% endif %}{% if job.id == (processing_job.id if processing_job else None) %} is-converting{% endif %}"
+    data-target="{{ job.id }}" data-status="{{ job.status }}">
+  {% if preview_cover %}
+  <span class="cover"><img src="{{ preview_cover }}" alt=""></span>
+  {% else %}
+  <span class="cover" style="background:{{ title|cover_gradient }};">{{ title|monogram }}</span>
+  {% endif %}
+  <span class="q-meta">
+    <span class="q-title">{{ title }}</span>
+    <span class="q-author">{{ author or 'Not looked up yet' }}</span>
+  </span>
+  {% if job.status == 'pending' %}
+    <span class="q-status st-waiting" id="q-status-{{ job.id }}">Waiting</span>
+  {% elif job.status in ('queued', 'detecting') %}
+    <span class="q-status st-waiting" id="q-status-{{ job.id }}">Looking up&hellip;</span>
+  {% elif job.status == 'awaiting_metadata_confirm' %}
+    <span class="q-status st-review" id="q-status-{{ job.id }}">Review</span>
+  {% elif job.status == 'failed' %}
+    <span class="q-status st-failed" id="q-status-{{ job.id }}">Failed</span>
+  {% elif job.status == 'cancelled' %}
+    <span class="q-status st-review" id="q-status-{{ job.id }}">Cancelled</span>
+  {% elif job.status == 'processing' %}
+    <span class="q-status st-converting" id="q-status-{{ job.id }}">{{ job.progress_pct }}%</span>
+  {% elif job.status == 'ready' %}
+    <span class="q-status st-queued" id="q-status-{{ job.id }}">{% if queue_positions.get(job.id) == 1 %}Up next{% else %}{{ queue_positions.get(job.id)|ordinal }}{% endif %}</span>
+    <span class="reorder">
+      <button type="button" class="reorder-up" data-job-id="{{ job.id }}" data-direction="up" aria-label="Move up"{% if queue_positions.get(job.id) == 1 %} disabled{% endif %}>&#9650;</button>
+      <button type="button" class="reorder-down" data-job-id="{{ job.id }}" data-direction="down" aria-label="Move down"{% if queue_positions.get(job.id) == (queue_positions.values()|list|length) %} disabled{% endif %}>&#9660;</button>
+    </span>
+  {% elif job.status == 'done' %}
+    <span class="q-status st-done" id="q-status-{{ job.id }}">Done</span>
+  {% endif %}
+</li>
