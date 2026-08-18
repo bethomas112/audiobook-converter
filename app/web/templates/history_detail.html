@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ job.source_path }} — Audiobook Pipeline{% endblock %}
+{% block content %}
+  <p><a href="/history">&larr; Back to history</a></p>
+  <h1>{{ job.source_path }}</h1>
+  <p><span class="badge badge-{{ job.status }}">{{ job.status }}</span></p>
+
+  <table>
+    <tr><th>Source type</th><td>{{ job.source_type or '—' }}</td></tr>
+    <tr><th>Destination</th><td>{{ job.destination_path or '—' }}</td></tr>
+    <tr><th>Created</th><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td></tr>
+    <tr><th>Updated</th><td>{{ job.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}</td></tr>
+  </table>
+
+  {% if job.selected_metadata %}
+  <h2>Matched metadata</h2>
+  <table>
+    {% for key, value in job.selected_metadata.items() %}
+    <tr><th>{{ key }}</th><td>{{ value }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if job.error_message %}
+  <h2>Error</h2>
+  <pre class="log">{{ job.error_message }}</pre>
+  {% endif %}
+
+  <h2>Log</h2>
+  <pre class="log">{{ job.log or 'No log entries yet.' }}</pre>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Review — Audiobook Pipeline{% endblock %}
+{% block content %}
+  <h1>Awaiting metadata confirmation</h1>
+  {% if jobs %}
+  <table>
+    <tr><th>Source</th><th>Guessed title</th><th>Guessed author</th><th></th></tr>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.source_path }}</td>
+      <td>{{ job.title_guess or '—' }}</td>
+      <td>{{ job.author_guess or '—' }}</td>
+      <td><a href="/review/{{ job.id }}">Review</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">Nothing to review right now.</p>
+  {% endif %}
+{% endblock %}

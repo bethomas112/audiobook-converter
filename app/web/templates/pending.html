@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Pending — Audiobook Pipeline{% endblock %}
+{% block content %}
+  <h1>Pending drop-offs</h1>
+  {% if jobs %}
+  <table>
+    <tr><th>Source</th><th>Detected</th><th></th></tr>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.source_path }}</td>
+      <td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>
+        <form method="post" action="/jobs/{{ job.id }}/start">
+          <button type="submit">Start processing</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">Nothing waiting. Drop an audiobook into the inbox folder to get started.</p>
+  {% endif %}
+{% endblock %}

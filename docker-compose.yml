@@ -1,0 +1,16 @@
+services:
+  audiobook-pipeline:
+    build: .
+    # image: ghcr.io/example/audiobook-pipeline:latest
+    container_name: audiobook-pipeline
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data/inbox:/data/inbox
+      - ./data/work:/data/work
+      - ./data/archive:/data/archive
+      - ./data/output:/data/output
+      - ./data/config:/data/config

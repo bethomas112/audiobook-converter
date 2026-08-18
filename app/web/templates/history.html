@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}History — Audiobook Pipeline{% endblock %}
+{% block content %}
+  <h1>Queue &amp; history</h1>
+  {% if jobs %}
+  <table>
+    <tr><th>Source</th><th>Status</th><th>Updated</th><th></th></tr>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.source_path }}</td>
+      <td><span class="badge badge-{{ job.status }}">{{ job.status }}</span></td>
+      <td>{{ job.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td><a href="/history/{{ job.id }}">Details</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No jobs yet.</p>
+  {% endif %}
+{% endblock %}
