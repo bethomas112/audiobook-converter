@@ -1,29 +1,39 @@
-# Audiobook Pipeline
+# Audiobook Converter
 
 A self-hosted tool that turns a downloaded audiobook — an M4B file, a
 folder of chapter/CD-split MP3s, or a single monolithic MP3 — into a
-properly tagged, chaptered M4B, with a web UI to confirm each step along
-the way.
+properly tagged, chaptered M4B. A web UI lets you confirm each step,
+watch live conversion progress, and manage a queue of several books at
+once.
+
+For how it's built internally — the job lifecycle, the conversion
+queue's design, the web UI's fragment/polling model — see
+[ARCHITECTURE.md](ARCHITECTURE.md). This README covers what it does and
+how to run it.
 
 ## What it does
 
-1. **Drop-off** — drop an audiobook into a watched inbox folder.
-2. **Detection** — once the item has stopped changing (no partial
-   downloads/copies picked up mid-write), it's queued as pending.
-3. **Confirm to start** — processing begins only once you confirm in the
-   web UI (or automatically, if configured).
-4. **Metadata search** — the tool guesses a title/author from the
-   filename and searches for candidate matches, with cover art, author,
-   narrator, series, and description.
-5. **Metadata review** — confirm a candidate, pick a different one, or
-   enter details manually. Nothing is written until you confirm (or it's
+1. **Drop-off** — drop an audiobook into a watched inbox folder. Once
+   it's stopped changing (no partial downloads/copies picked up
+   mid-write), it shows up in the **Needs Input** queue as "Waiting".
+2. **Look it up** — click "Find this book"; the tool guesses a
+   title/author from the filename and searches for candidate matches,
+   each with cover art, author, narrator, series, and description.
+3. **Review** — pick a candidate (or none — the fields are always
+   editable, so entering details manually is just leaving them as
+   typed) and confirm. Nothing is written until you do (or it's
    configured to auto-confirm the top match).
-6. **Conversion**:
+4. **Convert** — confirming queues the book; one book converts at a
+   time, and you can reorder or cancel anything still waiting its turn.
+   The book actually converting shows live progress in a persistent bar
+   at the top of the page, visible no matter what else you're looking
+   at, and can be cancelled mid-conversion.
    - An M4B source is passed through **untouched** — no re-encode, no
      remux, just a metadata-only tag patch.
-   - An MP3 source (or folder of them) is transcoded to AAC/M4B at the
-     source bitrate, with a configurable floor.
-7. **Chapters**, resolved in priority order:
+   - An MP3 source (or folder of them) is transcoded to AAC/M4B, always
+     at the source's own bitrate (re-encoding higher can't add back
+     quality that isn't there).
+5. **Chapters**, resolved in priority order:
    1. Embedded chapters already in an M4B input — left as-is.
    2. Official chapter data for the matched title, if the input didn't
       already have its own chapters.
@@ -31,15 +41,16 @@ the way.
       official chapter data.
    4. Silence detection, as a last resort for an undifferentiated single
       audio stream.
-8. **Tagging** — standard M4B/MP4 tags and embedded cover art (see
+6. **Tagging** — standard M4B/MP4 tags and embedded cover art (see
    [Tag mapping](#tag-mapping) below).
-9. **Output** — either a single self-tagged M4B file (`standalone` mode)
+7. **Output** — either a single self-tagged M4B file (`standalone` mode)
    or a library folder structure with optional sidecar files (`library`
    mode) — see [Configuration](#configuration).
-10. **Archive** — the original source is archived (default), deleted, or
-    left in place, per `SOURCE_CLEANUP_MODE`.
-11. **History** — the web UI shows a queue and history of jobs with
-    enough detail to diagnose failures.
+8. **Archive** — the original source is archived (default), deleted, or
+   left in place, per `SOURCE_CLEANUP_MODE`.
+9. **Done** — finished books stay listed with their full log and where
+   they were saved, for as long as you keep them (there's no automatic
+   history cleanup).
 
 ## Quick start
 
@@ -84,7 +95,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `WRITE_SIDECAR_FILES` | Write `desc.txt`/`reader.txt`/`cover.jpg`; `library` mode only | `false` |
 | `SOURCE_CLEANUP_MODE` | `archive`, `delete`, or `keep` | `archive` |
 | `ARCHIVE_RETENTION_DAYS` | Auto-purge window for archived originals; unset = keep forever | unset |
-| `AUTO_START_PROCESSING` | Skip the manual "confirm to start" step | `false` |
+| `AUTO_START_PROCESSING` | Skip the manual "look it up" step and start detection/metadata search immediately | `false` |
 | `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match | `false` |
 | `MIN_BITRATE_KBPS` | Informational floor (kbps); sources below it still convert (always at their own bitrate), just flagged in the log | `128` |
 | `METADATA_SOURCE` | Named for future alternate sources; only one exists today | `audnexus` |
