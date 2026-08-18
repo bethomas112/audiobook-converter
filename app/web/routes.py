@@ -1,3 +1,20 @@
+"""HTTP layer. Three kinds of routes, matching how app/web/static/app.js
+uses them:
+
+  - GET /               the full page (topbar + rail + one detail panel)
+  - GET /fragments/*     the same rail/panel/now-converting HTML rendered
+                          standalone, for the frontend to fetch and swap
+                          in without a full page reload
+  - GET /api/status      a small JSON poll target - just id/status/progress
+                          per job, cheap enough to hit every couple seconds
+  - POST /jobs/{id}/...  actions (start, confirm, cancel, requeue, remove,
+                          reorder); all just return {"ok": true} and let
+                          the frontend re-fetch whatever fragments changed
+
+_board_context() is the one place that queries and groups jobs by status;
+every route that renders a rail or panel builds its response from it, so
+the "Needs Input / Converting / Done" grouping only has to be defined once.
+"""
 import secrets
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request

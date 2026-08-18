@@ -1,3 +1,20 @@
+// No framework: the server is the source of truth for every job's HTML.
+// This file's whole job is wiring interactions and swapping small pieces of
+// the DOM in response to them, via three primitives -
+//
+//   - loadPanel(id)     fetch + swap the one detail panel currently shown
+//   - refreshRail()     fetch + swap the whole queue rail
+//   - refreshBoard(id)  do both, then re-select `id` (or the next best job
+//                        if `id` no longer exists, e.g. after a remove)
+//
+// Only one job's panel ever lives in the DOM at a time (see loadPanel) -
+// panels for jobs you're not looking at are never pre-rendered, so nothing
+// can go stale behind your back after a reorder or a background status
+// change. pollStatus() below is what notices those background changes: it
+// hits a cheap JSON endpoint every 2.5s, patches progress numbers in place
+// for the common case (nothing but percent/stage changed), and falls back
+// to a full refreshBoard() only when a job's status actually moved it
+// between groups or a job appeared/disappeared.
 (function () {
   "use strict";
 

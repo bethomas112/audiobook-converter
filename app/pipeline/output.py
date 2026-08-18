@@ -21,6 +21,12 @@ def sanitize_path_component(value: str) -> str:
 
 
 def render_template(template: str, values: dict) -> str:
+    """Fills {placeholder} tokens from values. A [bracketed section] drops
+    out entirely if any placeholder inside it is empty - e.g. a book with
+    no series - rather than leaving stray separators behind. See the
+    LIBRARY_*_TEMPLATE / STANDALONE_FILENAME_TEMPLATE docs in .env.example
+    for the placeholder list and worked examples.
+    """
     def render_bracket(match: re.Match) -> str:
         inner = match.group(1)
         placeholders_in_inner = _PLACEHOLDER_RE.findall(inner)

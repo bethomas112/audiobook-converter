@@ -1,3 +1,8 @@
+{# The queue sidebar: three status groups, each collapsible. Included by
+   index.html and served standalone by GET /fragments/rail for app.js to
+   swap in after any action that could move a job between groups. Grouping
+   logic (which statuses land in which section) lives in
+   app/web/routes.py:_board_context, not here. #}
 <aside class="rail" id="rail">
   <div class="rail-section">
     <button type="button" class="rail-header" aria-expanded="true" data-collapse-target="needsInputList">

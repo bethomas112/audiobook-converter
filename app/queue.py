@@ -1,3 +1,29 @@
+"""Job orchestration: the Huey task definitions, and the queue dispatcher
+that decides which job Huey actually runs and when.
+
+Two Huey tasks do the real work - start_job (detection + metadata search)
+and process_job (conversion through to archiving) - but nothing is ever
+handed to Huey the instant it becomes eligible. Confirming a job's
+metadata just marks it "ready" with a queue_order; dispatch_next() is the
+only thing that ever promotes a ready job to Huey, and only when nothing
+else is currently processing. That indirection is what makes the rest of
+this module simple:
+
+  - Reordering the queue (reorder_queue) is a plain update to queue_order
+    on rows Huey has never seen, not a queue-system operation.
+  - Cancelling a not-yet-started job (cancel_job) is a plain status flip,
+    since Huey was never told about it either.
+  - Cancelling the one job that IS running has to work differently, since
+    it's mid-execution in the worker process: cancel_job sets a
+    cancel_requested flag, and process_job's own progress-reporting loop
+    (see should_cancel() inside it) is what notices and stops the ffmpeg
+    subprocess.
+
+dispatch_next() is called after every state change that could free up or
+fill the "one job converting" slot - a confirm, a cancel, a requeue, or a
+job finishing - so the next ready job (if any) starts on its own without
+anything else having to poll for it.
+"""
 from pathlib import Path
 
 from huey import SqliteHuey, crontab

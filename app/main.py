@@ -1,3 +1,13 @@
+"""FastAPI entrypoint. This process serves the web UI and also runs the
+inbox watcher as a background thread (see app/watcher.py) - but it does
+NOT run the Huey consumer that actually executes jobs. That's a second,
+separate OS process (see entrypoint.sh), because the conversion work it
+does is long-running and blocking; keeping it out of this process is what
+lets the web UI stay responsive while a book is converting. The two
+processes coordinate purely through the shared SQLite database in
+CONFIG_DIR (see app/db.py for why that needs WAL mode) - there's no
+in-memory or IPC channel between them.
+"""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

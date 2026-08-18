@@ -1,3 +1,7 @@
+{# One job's detail pane. Rendered for `active_job` inside index.html, and
+   standalone by GET /fragments/panel/{id} when app.js swaps panels without
+   a reload. Always carries class="active" since only one panel is ever in
+   the DOM at once - see the note at the top of app/web/static/app.js. #}
 {% set meta = job.selected_metadata %}
 {% set title = (meta.title if meta and meta.title else job.title_guess) or job.source_path.split('/')[-1] %}
 {% set author = (meta.author if meta and meta.author else job.author_guess) or '' %}

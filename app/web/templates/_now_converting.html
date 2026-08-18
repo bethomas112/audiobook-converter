@@ -1,3 +1,8 @@
+{# The persistent progress bar in the sticky topbar - shows whichever job
+   is actively processing (there's at most one, enforced by
+   app/queue.py:dispatch_next), regardless of which panel is on screen.
+   Included by index.html and served standalone by
+   GET /fragments/now-converting for app.js to refresh after any action. #}
 {% if processing_job %}
 {% set job = processing_job %}
 {% set meta = job.selected_metadata %}

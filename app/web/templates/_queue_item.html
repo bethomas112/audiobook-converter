@@ -1,3 +1,6 @@
+{# One row in the rail. Included once per job by _rail.html - never
+   rendered as its own route, since a single row is never useful on its
+   own. #}
 {% set meta = job.selected_metadata %}
 {% set preview_cover = meta.cover_url if meta and meta.cover_url else (job.candidates[0].cover_url if job.candidates else None) %}
 {% set title = (meta.title if meta and meta.title else job.title_guess) or job.source_path.split('/')[-1] %}

@@ -1,3 +1,7 @@
+"""Loads every env var listed in .env.example into a single Config object,
+applying the same defaults. See .env.example for what each one does -
+this module is deliberately just plumbing, not documentation.
+"""
 import os
 from pathlib import Path
 
