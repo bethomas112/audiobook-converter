@@ -210,7 +210,13 @@ the frontend's job is fetching small fragments and swapping them in.
   `asin` — see the "asin" comment in `_candidates.html` for why that
   matters — and the chapter-preview list) is defined in exactly one
   place, included everywhere it's needed instead of duplicated per job
-  status.
+  status. `_candidates.html` also renders a "None of these" opt-out row
+  after the real results whenever any exist, so a wrong-but-plausible
+  match doesn't have to be picked (or edited over) just to get to manual
+  entry; app.js resets the confirm form's fields to job.title_guess /
+  job.author_guess (blank asin included) when it's clicked, the same
+  no-candidate-chosen state the confirm form already defaults to when
+  there are no candidates at all.
 - Only **one** job's detail panel ever exists in the DOM at a time,
   loaded on demand when you select it. Earlier iterations of this UI
   pre-rendered every job's panel up front and toggled visibility with

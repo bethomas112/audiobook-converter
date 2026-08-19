@@ -9,8 +9,15 @@
    be populated from, asin included: app.js's candidate-click handler only
    ever copies fields that exist in this JSON blob into the confirm form
    below, so dropping one here silently makes it unreachable from the UI
-   even if the route/model behind it is correct. #}
-<div class="candidates" id="candidatesWrap" data-candidates-json='{{ job.candidates|tojson }}'>
+   even if the route/model behind it is correct.
+
+   data-title-guess / data-author-guess mirror job.title_guess /
+   job.author_guess for app.js: the "None of these" option below (rendered
+   only when real candidates exist) resets the confirm form to the same
+   no-candidate-chosen state the empty-candidates case already gets
+   server-side - title/author fall back to these guesses, every other field
+   (asin included) goes blank. #}
+<div class="candidates" id="candidatesWrap" data-candidates-json='{{ job.candidates|tojson }}' data-title-guess="{{ job.title_guess or '' }}" data-author-guess="{{ job.author_guess or '' }}">
   {% for c in job.candidates %}
   <div class="candidate{% if loop.first %} selected{% endif %}" data-cand="{{ loop.index0 }}">
     {% if c.cover_url %}<span class="cand-cover"><img src="{{ c.cover_url }}" alt=""></span>
@@ -24,4 +31,13 @@
   {% else %}
   <p class="waiting-note">No candidate matches found. Enter details manually below.</p>
   {% endfor %}
+  {% if job.candidates %}
+  <div class="candidate candidate-none" data-cand="none">
+    <div class="cand-info">
+      <div class="cand-title">None of these</div>
+      <div class="cand-sub">Clear the fields below and enter your own metadata</div>
+    </div>
+    <span class="cand-radio"></span>
+  </div>
+  {% endif %}
 </div>

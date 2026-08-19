@@ -217,6 +217,13 @@
     } catch (e) {
       candidates = [];
     }
+    // Fields the confirm form can be populated from. Kept as one list so the
+    // "None of these" row below and a real candidate pick always write the
+    // exact same set of fields - no field left holding a stale value from a
+    // previously-selected candidate.
+    var fields = ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"];
+    var titleGuess = candidatesEl.getAttribute("data-title-guess") || "";
+    var authorGuess = candidatesEl.getAttribute("data-author-guess") || "";
     var cards = candidatesEl.querySelectorAll(".candidate");
     cards.forEach(function (card) {
       card.setAttribute("tabindex", "0");
@@ -226,17 +233,30 @@
           c.classList.remove("selected");
         });
         card.classList.add("selected");
+        var form = root.querySelector("[data-confirm-form]");
+        if (!form) return;
+        // "None of these" - reset to the same no-candidate-chosen state the
+        // empty-candidates-list case already gets server-side: title/author
+        // fall back to the job's guesses, everything else (asin included)
+        // goes blank, rather than leaving a previous selection's values in
+        // place.
+        if (card.classList.contains("candidate-none")) {
+          fields.forEach(function (field) {
+            var input = form.querySelector('[name="' + field + '"]');
+            if (!input) return;
+            if (field === "title") input.value = titleGuess;
+            else if (field === "author") input.value = authorGuess;
+            else input.value = "";
+          });
+          return;
+        }
         var idx = parseInt(card.getAttribute("data-cand"), 10);
         var c = candidates[idx];
         if (!c) return;
-        var form = root.querySelector("[data-confirm-form]");
-        if (!form) return;
-        ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"].forEach(
-          function (field) {
-            var input = form.querySelector('[name="' + field + '"]');
-            if (input) input.value = c[field] || "";
-          }
-        );
+        fields.forEach(function (field) {
+          var input = form.querySelector('[name="' + field + '"]');
+          if (input) input.value = c[field] || "";
+        });
       });
       card.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " ") {

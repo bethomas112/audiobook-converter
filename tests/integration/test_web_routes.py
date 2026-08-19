@@ -79,6 +79,46 @@ def test_fragment_panel_confirm_form_carries_candidate_asin(client):
     assert 'name="asin" value="B0123456789"' in resp.text
 
 
+def test_candidates_list_offers_none_of_these_option_when_candidates_exist(client):
+    """Enhancement: when real search results exist but none of them are
+    right, the reviewer needs a way to say so explicitly rather than either
+    picking a wrong match or hand-editing over whatever the first result
+    left in the form. The option should only appear alongside real
+    candidates - the empty-candidates case already gets a "no candidate
+    chosen" confirm form for free (see _panel.html's c0 = {} fallback), so
+    there's nothing for it to do there.
+    """
+    job = Job.create(
+        source_path="/x",
+        status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        title_guess="My Book",
+        author_guess="Some Author",
+        candidates_json='[{"title": "The Calamity Club", "author": "A. Author", "asin": "B0123456789"}]',
+    )
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert 'class="candidate candidate-none"' in resp.text
+    assert "None of these" in resp.text
+    # app.js needs the job's title/author guesses to reset the confirm form
+    # to when this option is clicked, since it can't read Jinja context.
+    assert 'data-title-guess="My Book"' in resp.text
+    assert 'data-author-guess="Some Author"' in resp.text
+
+
+def test_candidates_list_omits_none_of_these_option_when_no_candidates(client):
+    """The empty-candidates-list branch already renders a plain "no matches"
+    note with no cards at all, and its confirm form already defaults to the
+    no-candidate-chosen state via _panel.html's c0 = {} fallback - so the
+    "None of these" row (which exists to opt out of a real, wrong match)
+    would be a redundant, confusing extra click here.
+    """
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, candidates_json="[]")
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert "candidate-none" not in resp.text
+    assert "No candidate matches found" in resp.text
+
+
 @pytest.mark.parametrize("status", [Job.STATUS_AWAITING_METADATA_CONFIRM, Job.STATUS_PROCESSING])
 def test_fragment_panel_chapter_preview_includes_all_chapters(client, status):
     """Regression test for the "N more chapters" line in _chapters.html
@@ -275,6 +315,28 @@ def test_search_endpoint_response_carries_candidate_asin(client, monkeypatch):
     assert resp.status_code == 200
     assert "data-candidates-json" in resp.text
     assert "B0123456789" in resp.text
+
+
+def test_search_endpoint_response_includes_none_of_these_option(client, monkeypatch):
+    """The "None of these" opt-out row must survive a manual re-search too,
+    not just the initial automatic-search render, since app.js swaps this
+    same fragment back into the panel and re-wires it after every search.
+    """
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    monkeypatch.setattr(
+        metadata_mod,
+        "search",
+        lambda title, author, **kwargs: [
+            {"title": "The Calamity Club", "author": "A. Author", "asin": "B0123456789"}
+        ],
+    )
+
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "calamity club"})
+    assert resp.status_code == 200
+    assert 'class="candidate candidate-none"' in resp.text
 
 
 def test_search_endpoint_404_for_missing_job(client, monkeypatch):
