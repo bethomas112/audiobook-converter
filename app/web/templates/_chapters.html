@@ -1,0 +1,23 @@
+{# Chapter list preview, shared by the awaiting_metadata_confirm and
+   processing branches of _panel.html (both show the same "what will get
+   written" chapter list, just at different points in a job's life). Always
+   shows the first 6 chapters. The rest sit behind a nested <details> whose
+   summary is the "N more chapters" line, so expanding it needs no JS -
+   it's the same disclosure-triangle mechanism the outer <details class=
+   "chapters"> already uses, just nested one level deeper. #}
+<details class="chapters">
+  <summary><span>Chapters &mdash; {{ job.chapters_preview|length }}, from Audible&rsquo;s official listing</span> <span class="chev">&#8250;</span></summary>
+  <div class="chapter-list">
+    {% for ch in job.chapters_preview[:6] %}
+    <div class="chapter-row"><span class="chapter-time">{{ '%d:%02d'|format(ch.start_sec // 60, ch.start_sec % 60) }}</span><span>{{ ch.title }}</span></div>
+    {% endfor %}
+    {% if job.chapters_preview|length > 6 %}
+    <details class="chapters-more">
+      <summary class="chapter-more">&middot; &middot; &middot; {{ job.chapters_preview|length - 6 }} more chapters &middot; &middot; &middot;</summary>
+      {% for ch in job.chapters_preview[6:] %}
+      <div class="chapter-row"><span class="chapter-time">{{ '%d:%02d'|format(ch.start_sec // 60, ch.start_sec % 60) }}</span><span>{{ ch.title }}</span></div>
+      {% endfor %}
+    </details>
+    {% endif %}
+  </div>
+</details>
