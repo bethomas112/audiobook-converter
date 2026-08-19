@@ -1,0 +1,21 @@
+services:
+  audiobook-pipeline-e2e:
+    build:
+      context: ../..
+    container_name: audiobook-pipeline-e2e
+    restart: "no"
+    ports:
+      - "8001:8000"
+    env_file:
+      - e2e.env
+    volumes:
+      - ./data/inbox:/data/inbox
+      - ./data/work:/data/work
+      - ./data/archive:/data/archive
+      - ./data/output:/data/output
+      # CONFIG_DIR is a named volume, not a bind mount - see README.md's
+      # "SQLite WAL disk I/O error" note for why.
+      - config_data:/data/config
+
+volumes:
+  config_data:
