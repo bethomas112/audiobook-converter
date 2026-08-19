@@ -7,6 +7,7 @@ import base64
 
 import pytest
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 
 from app.db import Job
@@ -18,6 +19,17 @@ def client(isolated_dirs):
     app = FastAPI()
     app.include_router(router)
     return TestClient(app)
+
+
+def test_static_favicon_is_served():
+    # Mirrors app.main's `app.mount("/static", ...)` directly - that mount
+    # doesn't depend on the lifespan (init_db + watcher thread), so it's
+    # easy to exercise standalone without pulling in the rest of main.py.
+    app = FastAPI()
+    app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+    resp = TestClient(app).get("/static/favicon.svg")
+    assert resp.status_code == 200
+    assert "svg" in resp.headers["content-type"]
 
 
 def test_index_renders_ok(client):

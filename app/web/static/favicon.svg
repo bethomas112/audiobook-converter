@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 34">
+  <!-- Same three-bar waveform mark as the topbar .brand-mark in index.html,
+       reproduced here with a fixed background chip (matching the
+       .brand-mark CSS: amber gradient square, ink-colored bars) since a
+       favicon has no surrounding `currentColor` text context to inherit. -->
+  <defs>
+    <linearGradient id="chip" x1="8%" y1="4%" x2="88%" y2="100%">
+      <stop offset="0%" stop-color="#ffc266"/>
+      <stop offset="100%" stop-color="#9c6f28"/>
+    </linearGradient>
+  </defs>
+  <rect width="34" height="34" rx="9" fill="url(#chip)"/>
+  <g transform="translate(9,10)">
+    <rect x="0" y="5" width="3" height="9" rx="1" fill="#17130f"/>
+    <rect x="6.5" y="0" width="3" height="14" rx="1" fill="#17130f"/>
+    <rect x="13" y="3" width="3" height="11" rx="1" fill="#17130f"/>
+  </g>
+</svg>

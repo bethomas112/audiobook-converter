@@ -256,7 +256,7 @@ app/
     routes.py             all HTTP routes (see its module docstring)
     templates/             index.html + the _rail/_panel/_queue_item/_now_converting/
                             _candidates/_chapters partials
-    static/                app.js, style.css, fonts.css, fonts/
+    static/                app.js, style.css, fonts.css, favicon.svg, fonts/
 ```
 
 ## Notable trade-offs
