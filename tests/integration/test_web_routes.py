@@ -137,6 +137,33 @@ def test_fragment_panel_chapter_preview_includes_all_chapters(client, status):
     assert 'class="chapters-more"' in resp.text
 
 
+@pytest.mark.parametrize("status", [Job.STATUS_AWAITING_METADATA_CONFIRM, Job.STATUS_PROCESSING])
+def test_fragment_panel_chapter_more_control_has_collapse_markup(client, status):
+    """Regression test for the "N more chapters" summary text staying
+    visible (and misleading) after it's been expanded, with no way to
+    collapse back to the 6-chapter view except that same stale line.
+
+    The fix is CSS-only (style.css flexes <details class="chapters-more">
+    and reorders its <summary> to the bottom when [open], swapping the
+    "more chapters" text for a lone caret) - a TestClient render can't
+    execute CSS, so this test only checks that the markup both states
+    depend on is actually present in the rendered HTML:
+    - .chapter-more-text: the "N more chapters" copy, hidden via CSS once
+      <details class="chapters-more"> is [open].
+    - .chapter-more-collapse: the caret, hidden by default and shown via
+      CSS only when [open], which doubles as the collapse control since
+      it's part of the same <summary> that toggles the <details>.
+    It does NOT verify the actual expand/collapse visual behavior, the
+    flex reordering, or click behavior - that requires a real browser.
+    """
+    chapters = [{"start_sec": i * 60, "title": f"Chapter {i}"} for i in range(1, 10)]
+    job = Job.create(source_path="/x", status=status, chapters_preview=chapters)
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert 'class="chapter-more-text"' in resp.text
+    assert 'class="chapter-more-collapse"' in resp.text
+
+
 def test_fragment_panel_shows_candidate_and_source_durations_side_by_side(client):
     """Enhancement: runtime/duration must be visible during metadata review,
     not just discoverable after conversion - so a mismatched edition (e.g.
