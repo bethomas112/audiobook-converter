@@ -6,6 +6,7 @@ from peewee import (
     BooleanField,
     CharField,
     DateTimeField,
+    FloatField,
     IntegerField,
     Model,
     SqliteDatabase,
@@ -59,6 +60,16 @@ class Job(BaseModel):
     source_type = CharField(null=True)  # m4b_single | mp3_multi | mp3_single
     audio_files_json = TextField(null=True)
     status = CharField(default=STATUS_PENDING)
+
+    # Sum of ffutil.get_duration_sec() across audio_files, computed once by
+    # start_job() right after detection succeeds. Purely informational -
+    # lets the metadata review step (app/web/templates/_panel.html) show
+    # the source's actual runtime next to a candidate's official
+    # runtime_minutes (app/pipeline/metadata.py) so a mismatched edition
+    # (e.g. an 8-hour abridged match against a 28-hour unabridged source)
+    # is visible before confirming. Null for jobs that predate this field,
+    # or whose detection never got far enough to compute it.
+    source_duration_sec = FloatField(null=True)
 
     title_guess = CharField(null=True)
     author_guess = CharField(null=True)
@@ -156,6 +167,36 @@ class Job(BaseModel):
         self.selected_metadata_json = json.dumps(value) if value is not None else None
 
 
+def _add_missing_columns():
+    """peewee's create_tables() only CREATEs tables that don't exist yet -
+    it never ALTERs one that's already there to pick up new fields added to
+    a model since. That's fine for a brand new install (create_tables does
+    the whole job in one shot), but it means an *existing* deployment's
+    already-created SQLite file would be missing any column added after
+    that file was first created - e.g. source_duration_sec, added here -
+    and every query touching that column would fail against it.
+
+    This is a deliberately minimal, single-table migration check rather
+    than a real migration framework: on every startup, compare the
+    model's fields against what SQLite actually has (via PRAGMA
+    table_info) and ALTER TABLE ADD COLUMN for anything missing. Safe to
+    run every time - it's a no-op once the column exists - and cheap
+    enough not to warrant caching that fact anywhere.
+    """
+    existing_columns = {row[1] for row in db.execute_sql(f"PRAGMA table_info({Job._meta.table_name})").fetchall()}
+    for field in Job._meta.sorted_fields:
+        if field.column_name in existing_columns:
+            continue
+        # A fresh SQL context per field: peewee's SQL contexts accumulate
+        # state as nodes are rendered into them, so reusing one across
+        # fields would concatenate every prior column's DDL onto each new
+        # ALTER TABLE statement.
+        ctx = db.get_sql_context()
+        column_ddl, params = ctx.sql(field.ddl(ctx)).query()
+        db.execute_sql(f"ALTER TABLE {Job._meta.table_name} ADD COLUMN {column_ddl}", params)
+
+
 def init_db():
     db.connect(reuse_if_open=True)
     db.create_tables([Job])
+    _add_missing_columns()

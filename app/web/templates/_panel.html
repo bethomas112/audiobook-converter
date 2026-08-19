@@ -42,7 +42,7 @@
         <div>
           <div class="eyebrow">Needs review</div>
           <h2 class="panel-title">{{ job.title_guess or title }}</h2>
-          <div class="panel-author">Guessed from {{ 'folder' if job.source_type != 'mp3_single' and job.source_type != 'm4b_single' else 'file' }} name &middot; {{ job.author_guess or 'no author guess' }}</div>
+          <div class="panel-author">Guessed from {{ 'folder' if job.source_type != 'mp3_single' and job.source_type != 'm4b_single' else 'file' }} name &middot; {{ job.author_guess or 'no author guess' }}{% if job.source_duration_sec %} &middot; source runs {{ job.source_duration_sec|duration_seconds }}{% endif %}</div>
         </div>
       </div>
 

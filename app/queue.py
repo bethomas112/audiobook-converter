@@ -57,6 +57,15 @@ def start_job(job_id: int):
         if result.ignored_files:
             job.append_log(f"Ignored non-audio files: {[f.name for f in result.ignored_files]}")
 
+        # Total actual source duration, probed directly rather than trusted
+        # from any catalog. Computed here (once, up front) rather than only
+        # at conversion time so the review step can show it next to a
+        # candidate's official runtime_minutes - letting a mismatched
+        # edition (e.g. an abridged match against an unabridged source) be
+        # spotted before confirming instead of only after conversion.
+        job.source_duration_sec = sum(ffutil.get_duration_sec(f) for f in result.audio_files)
+        job.append_log(f"Total source duration: {job.source_duration_sec / 60:.1f} min.")
+
         candidates = metadata.search(result.title_guess, result.author_guess)
         job.candidates = candidates
         job.append_log(f"Found {len(candidates)} metadata candidate(s).")

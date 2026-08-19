@@ -71,6 +71,15 @@ def _product_to_candidate(product: dict) -> dict:
         "description": _strip_html(description),
         "cover_url": _extract_cover_url(product),
         "genre": "",
+        # Official runtime in minutes, straight from Audible's catalog
+        # (confirmed via a live query against AUDIBLE_SEARCH_URL: the field
+        # is `runtime_length_min`, an int). Surfaced in the review UI next
+        # to the source's actual probed duration so a mismatched edition
+        # (e.g. an abridged audiobook matched against an unabridged source)
+        # is visible before confirming, not just discoverable after
+        # conversion. None (not "") when Audible didn't report one, since
+        # this is numeric rather than display text.
+        "runtime_minutes": product.get("runtime_length_min"),
     }
 
 

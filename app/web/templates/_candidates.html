@@ -17,7 +17,7 @@
     {% else %}<span class="cand-cover" style="background:{{ c.title|cover_gradient }};">{{ c.title|monogram }}</span>{% endif %}
     <div class="cand-info">
       <div class="cand-title">{{ c.title }}</div>
-      <div class="cand-sub">{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}</div>
+      <div class="cand-sub">{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}{% if c.runtime_minutes %} &middot; {{ c.runtime_minutes|duration_minutes }}{% endif %}</div>
     </div>
     <span class="cand-radio"></span>
   </div>
