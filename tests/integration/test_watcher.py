@@ -100,6 +100,44 @@ def test_source_with_existing_job_is_not_requeued(isolated_dirs, running_watcher
     assert Job.select().where(Job.source_path == str(f)).count() == 1
 
 
+def test_dotfile_drop_in_is_never_queued(isolated_dirs, running_watcher):
+    """A macOS Finder .DS_Store (or any dotfile/dot-directory) dropped into
+    the inbox must never become a Job - it can never be usefully processed
+    and would otherwise get permanently stuck in the "Needs Input" queue.
+    """
+    (isolated_dirs["inbox"] / ".DS_Store").write_bytes(b"x" * 100)
+
+    time.sleep(1.0)  # comfortably past one checker tick and the settle window
+    assert Job.select().count() == 0
+
+    # A normal drop-off alongside it should still be picked up as usual.
+    (isolated_dirs["inbox"] / "book.mp3").write_bytes(b"y" * 1000)
+    assert _wait_until(lambda: Job.select().count() == 1, timeout=5.0)
+    job = Job.select().first()
+    assert job.source_path == str(isolated_dirs["inbox"] / "book.mp3")
+
+
+def test_preexisting_dotfile_in_inbox_is_never_queued(isolated_dirs, monkeypatch):
+    """A dotfile already sitting in the inbox before the watcher starts
+    (picked up by the initial iterdir() scan) must also be ignored.
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.4)
+    monkeypatch.setattr(config, "AUTO_START_PROCESSING", False)
+
+    (isolated_dirs["inbox"] / ".DS_Store").write_bytes(b"x" * 100)
+
+    observer, stop_event = start_watcher()
+    try:
+        time.sleep(1.0)  # comfortably past one checker tick and the settle window
+        assert Job.select().count() == 0
+    finally:
+        stop_event.set()
+        observer.stop()
+        observer.join(timeout=5)
+
+
 def test_auto_start_processing_queues_and_starts_immediately(isolated_dirs, monkeypatch, huey_immediate):
     from app.config import config
     from app.pipeline import metadata as metadata_mod
