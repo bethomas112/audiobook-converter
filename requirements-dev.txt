@@ -1,0 +1,5 @@
+# Test-only dependencies. Not installed in the Docker image (Dockerfile only
+# installs requirements.txt) - keep the production image minimal.
+-r requirements.txt
+pytest==8.3.4
+respx==0.22.0
