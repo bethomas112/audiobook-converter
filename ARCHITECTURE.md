@@ -115,9 +115,19 @@ archive.handle_source_cleanup()
 ```
 
 **Chapters** are resolved in priority order (`app/pipeline/chapters.py`):
-embedded chapters already in an M4B input are left untouched; otherwise
-audnexus's official chapter data for the matched title is used if
-available; otherwise, for a multi-file MP3 source, each source file
+embedded chapters already in an M4B input are left untouched *if* the file
+already carries a QuickTime-style chapter track (`ffutil.
+has_quicktime_chapter_track`) alongside the legacy Nero `chpl` atom -
+otherwise the same chapter data is re-injected through
+`ffutil.inject_chapters_ffmetadata()` to add the missing track. This
+matters because Apple's own apps (Books, Music, Podcasts, QuickTime) need
+that QuickTime track specifically to show real chapter *titles*; lacking
+it, they still get the right chapter *count* but fall back to generic "1",
+"2", "3" numbering - a real, silent gap some other/older ffmpeg-based
+tooling can leave in a source .m4b, which `ffprobe`'s chapter list can't
+tell apart from a fully-correct file. Otherwise (no usable embedded
+chapters), audnexus's official chapter data for the matched title is used
+if available; otherwise, for a multi-file MP3 source, each source file
 becomes one chapter; otherwise (a single undifferentiated stream with no
 better source) chapter breaks are inferred from silence via ffmpeg's
 `silencedetect` filter. audnexus timestamps are for Audible's own
