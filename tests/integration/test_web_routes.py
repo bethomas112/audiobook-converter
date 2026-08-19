@@ -164,6 +164,26 @@ def test_fragment_panel_chapter_more_control_has_collapse_markup(client, status)
     assert 'class="chapter-more-collapse"' in resp.text
 
 
+@pytest.mark.parametrize("status", [Job.STATUS_AWAITING_METADATA_CONFIRM, Job.STATUS_PROCESSING])
+def test_fragment_panel_chapter_timestamps_use_hms_past_one_hour(client, status):
+    """Regression test for chapter timestamps in _chapters.html always
+    rendering as an unbounded m:ss (e.g. a chapter starting 14h in showed
+    "842:00" - 842 total minutes - rather than anything resembling a clock),
+    which is hard to read for long audiobooks. Chapters starting at or past
+    the 1-hour mark must render as h:mm:ss (zero-padded minutes/seconds),
+    while chapters under an hour keep the original m:ss rendering.
+    """
+    chapters = [
+        {"start_sec": 125, "title": "Early Chapter"},  # 2:05
+        {"start_sec": 5025, "title": "Late Chapter"},  # 1:23:45
+    ]
+    job = Job.create(source_path="/x", status=status, chapters_preview=chapters)
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert "2:05" in resp.text
+    assert "1:23:45" in resp.text
+
+
 def test_fragment_panel_shows_candidate_and_source_durations_side_by_side(client):
     """Enhancement: runtime/duration must be visible during metadata review,
     not just discoverable after conversion - so a mismatched edition (e.g.

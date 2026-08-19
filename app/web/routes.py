@@ -117,6 +117,23 @@ templates.env.filters["duration_minutes"] = _format_duration_minutes
 templates.env.filters["duration_seconds"] = _format_duration_seconds
 
 
+# Chapter timestamps in the review UI (_chapters.html) - a "clock" style
+# readout, not the rounded "Xh Ym" summary above: m:ss under an hour so
+# short-book chapter lists stay compact, h:mm:ss (zero-padded) past the
+# 1-hour mark so a 14h-in chapter reads as "14:02:00" rather than an
+# unbounded minute count like "842:00".
+def _chapter_timestamp(start_sec) -> str:
+    start_sec = int(start_sec or 0)
+    hours, remainder = divmod(start_sec, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+templates.env.filters["chapter_timestamp"] = _chapter_timestamp
+
+
 def require_auth(credentials: HTTPBasicCredentials = Depends(_basic_auth)):
     if config.WEB_UI_AUTH != "basic":
         return
