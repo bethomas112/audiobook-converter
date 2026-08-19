@@ -286,6 +286,10 @@ a{color:inherit;}
 .cand-radio{flex:none; width:18px; height:18px; border-radius:50%; border:2px solid var(--muted-dim); position:relative;}
 .candidate.selected .cand-radio{border-color:var(--amber);}
 .candidate.selected .cand-radio::after{content:""; position:absolute; inset:3px; border-radius:50%; background:var(--amber);}
+.candidate-none{border-style:dashed; background:transparent;}
+.candidate-none:hover{border-color:var(--hairline-strong); background:var(--surface-2);}
+.candidate-none .cand-title{font-weight:500; color:var(--muted);}
+.candidate-none.selected{background:var(--amber-wash);}
 
 /* ---- index card (staged metadata) ---- */
 .index-card{

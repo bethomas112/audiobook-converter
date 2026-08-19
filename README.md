@@ -21,9 +21,10 @@ how to run it.
    each with cover art, author, narrator, series, description, and the
    book's official runtime. Didn't find the right one? Search again with
    your own title/author instead of the filename-derived guess.
-3. **Review** — pick a candidate (or none — the fields are always
-   editable, so entering details manually is just leaving them as
-   typed) and confirm. The candidate's official runtime is shown next to
+3. **Review** — pick a candidate, or click "None of these" to clear the
+   fields back to the filename-derived guess and type your own (every
+   field is always editable regardless of what's selected), and confirm.
+   The candidate's official runtime is shown next to
    the source files' actual total duration, so a mismatched edition
    (e.g. an abridged match against an unabridged source) is easy to spot
    before confirming. A preview of the chapters that will be written is
