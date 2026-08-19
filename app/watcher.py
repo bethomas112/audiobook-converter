@@ -30,7 +30,15 @@ class _ActivityHandler(FileSystemEventHandler):
             rel = p.relative_to(config.INBOX_DIR)
         except ValueError:
             return None
-        return config.INBOX_DIR / rel.parts[0] if rel.parts else None
+        if not rel.parts:
+            return None
+        top_name = rel.parts[0]
+        if top_name.startswith("."):
+            # Ignore dotfiles/dot-directories (e.g. macOS Finder's
+            # .DS_Store) - they're never a real drop-off and would
+            # otherwise become a permanently-stuck, unprocessable job.
+            return None
+        return config.INBOX_DIR / top_name
 
     def on_any_event(self, event):
         entry = self._top_level_entry(event.src_path)
@@ -49,6 +57,10 @@ def _known_source_paths() -> set:
 def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threading.Event):
     with lock:
         for entry in config.INBOX_DIR.iterdir():
+            if entry.name.startswith("."):
+                # Ignore dotfiles/dot-directories (e.g. a pre-existing
+                # .DS_Store) so they never become a permanently-stuck job.
+                continue
             activity.setdefault(entry, time.time())
 
     while not stop_event.is_set():
