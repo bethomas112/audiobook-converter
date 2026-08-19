@@ -46,21 +46,17 @@
         </div>
       </div>
 
-      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>Not the right book?</span>
-        <span class="hint">search again with your own terms</span>
-      </div>
       <form data-search-form data-job-id="{{ job.id }}" class="search-form">
         <input class="search-field" name="title" placeholder="Title" value="{{ job.title_guess or '' }}">
         <input class="search-field" name="author" placeholder="Author" value="{{ job.author_guess or '' }}">
         <button type="submit" class="btn btn-ghost">Search</button>
       </form>
 
-      <div class="section-label">Which one is this?</div>
+      <div class="section-label">Select the Book</div>
       {% include "_candidates.html" %}
 
       <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>What we&rsquo;ll write to the file</span>
+        <span>What will be written to file</span>
         <span class="hint">click any field to change it</span>
       </div>
       <form data-confirm-form data-job-id="{{ job.id }}">
@@ -135,7 +131,7 @@
       </div>
       <div class="turn-badge">Waiting its turn &middot; <b>{{ queue_positions.get(job.id, 1)|ordinal }}</b> in line</div>
 
-      <div class="section-label">What we&rsquo;ll write to the file</div>
+      <div class="section-label">What will be written to file</div>
       <div class="index-card">
         <div class="index-card-title">Staged metadata &middot; confirmed</div>
         <div class="field-row"><span class="field-label">Title</span><input class="field-value" readonly value="{{ meta.title }}"></div>

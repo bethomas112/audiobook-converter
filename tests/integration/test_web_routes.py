@@ -48,6 +48,18 @@ def test_fragment_panel_for_existing_job(client):
     assert resp.status_code == 200
 
 
+def test_fragment_panel_awaiting_confirm_shows_select_the_book_label(client):
+    """Regression guard for the candidate-picker section label copy: it
+    should read "Select the Book", not the older "Which one is this?"
+    wording.
+    """
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert "Select the Book" in resp.text
+    assert "Which one is this?" not in resp.text
+
+
 def test_fragment_panel_confirm_form_carries_candidate_asin(client):
     """Regression test for the confirm form silently dropping asin: the
     server-rendered confirm form (app/web/templates/_panel.html) must embed
