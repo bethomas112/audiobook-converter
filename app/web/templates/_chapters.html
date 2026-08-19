@@ -10,12 +10,16 @@
    flexes <details class="chapters-more"> and reorders that same <summary>
    to the bottom of the revealed rows, swapping its "N more chapters" text
    for a lone caret (see .chapters-more[open] in style.css). Clicking it
-   still just toggles the same <details> - no JS needed either way. #}
+   still just toggles the same <details> - no JS needed either way.
+
+   Chapter timestamps use the chapter_timestamp filter (app/web/routes.py):
+   m:ss under an hour, h:mm:ss (zero-padded) once a chapter starts past the
+   1-hour mark, so long audiobooks don't show an unbounded minute count. #}
 <details class="chapters">
   <summary><span>Chapters &mdash; {{ job.chapters_preview|length }}, from Audible&rsquo;s official listing</span> <span class="chev">&#8250;</span></summary>
   <div class="chapter-list">
     {% for ch in job.chapters_preview[:6] %}
-    <div class="chapter-row"><span class="chapter-time">{{ '%d:%02d'|format(ch.start_sec // 60, ch.start_sec % 60) }}</span><span>{{ ch.title }}</span></div>
+    <div class="chapter-row"><span class="chapter-time">{{ ch.start_sec|chapter_timestamp }}</span><span>{{ ch.title }}</span></div>
     {% endfor %}
     {% if job.chapters_preview|length > 6 %}
     <details class="chapters-more">
@@ -24,7 +28,7 @@
         <span class="chapter-more-collapse" aria-hidden="true">&#8250;</span>
       </summary>
       {% for ch in job.chapters_preview[6:] %}
-      <div class="chapter-row"><span class="chapter-time">{{ '%d:%02d'|format(ch.start_sec // 60, ch.start_sec % 60) }}</span><span>{{ ch.title }}</span></div>
+      <div class="chapter-row"><span class="chapter-time">{{ ch.start_sec|chapter_timestamp }}</span><span>{{ ch.title }}</span></div>
       {% endfor %}
     </details>
     {% endif %}
