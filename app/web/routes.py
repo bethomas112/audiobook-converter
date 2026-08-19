@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import config
 from app.db import Job
+from app.pipeline import metadata
 from app.queue import (
     cancel_job,
     confirm_metadata,
@@ -221,6 +222,34 @@ def confirm(
     }
     confirm_metadata(job_id, selected)
     return JSONResponse({"ok": True})
+
+
+@router.post("/jobs/{job_id}/search")
+def search_metadata(
+    job_id: int,
+    request: Request,
+    title: str = Form(""),
+    author: str = Form(""),
+    _=Depends(require_auth),
+):
+    """Manual retry of the metadata search for the review step, for when
+    detect._guess_title_author()'s filename-derived guess didn't produce a
+    good automatic match. Reuses the exact same metadata.search() call
+    start_job() makes - it's not coupled to the filename in any way, that's
+    purely what start_job() happens to pass it - so this is purely an
+    additive way to re-run it with user-supplied terms. Returns just the
+    re-rendered candidates fragment (not the whole panel) so the frontend
+    can swap it in without disturbing the rest of the review form.
+    """
+    job = Job.get_or_none(Job.id == job_id)
+    if job is None:
+        raise HTTPException(status_code=404)
+    if not title.strip() and not author.strip():
+        raise HTTPException(status_code=400, detail="Enter a title or author to search.")
+
+    job.candidates = metadata.search(title, author)
+    job.touch_and_save()
+    return templates.TemplateResponse("_candidates.html", {"request": request, "job": job})
 
 
 @router.post("/jobs/{job_id}/cancel")

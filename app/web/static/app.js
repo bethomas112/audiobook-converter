@@ -205,42 +205,83 @@
     }
   }
 
-  // ---- panel interactions (candidates, confirm form, action buttons) ----
+  // ---- candidate cards (selecting one fills in the confirm form below) ----
+  // Pulled out of wirePanelInteractions so a manual search (see the
+  // data-search-form handler below) can re-wire just the swapped-in
+  // candidates fragment without re-binding the confirm form/action buttons
+  // a second time.
+  function wireCandidateInteractions(root, candidatesEl) {
+    var candidates = [];
+    try {
+      candidates = JSON.parse(candidatesEl.getAttribute("data-candidates-json"));
+    } catch (e) {
+      candidates = [];
+    }
+    var cards = candidatesEl.querySelectorAll(".candidate");
+    cards.forEach(function (card) {
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("role", "radio");
+      card.addEventListener("click", function () {
+        cards.forEach(function (c) {
+          c.classList.remove("selected");
+        });
+        card.classList.add("selected");
+        var idx = parseInt(card.getAttribute("data-cand"), 10);
+        var c = candidates[idx];
+        if (!c) return;
+        var form = root.querySelector("[data-confirm-form]");
+        if (!form) return;
+        ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"].forEach(
+          function (field) {
+            var input = form.querySelector('[name="' + field + '"]');
+            if (input) input.value = c[field] || "";
+          }
+        );
+      });
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          card.click();
+        }
+      });
+    });
+  }
+
+  // ---- panel interactions (candidates, search, confirm form, action buttons) ----
   function wirePanelInteractions(root) {
     var candidatesEl = root.querySelector(".candidates[data-candidates-json]");
     if (candidatesEl) {
-      var candidates = [];
-      try {
-        candidates = JSON.parse(candidatesEl.getAttribute("data-candidates-json"));
-      } catch (e) {
-        candidates = [];
-      }
-      root.querySelectorAll(".candidate").forEach(function (card) {
-        card.setAttribute("tabindex", "0");
-        card.setAttribute("role", "radio");
-        card.addEventListener("click", function () {
-          root.querySelectorAll(".candidate").forEach(function (c) {
-            c.classList.remove("selected");
+      wireCandidateInteractions(root, candidatesEl);
+    }
+
+    var searchForm = root.querySelector("[data-search-form]");
+    if (searchForm) {
+      searchForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var jobId = searchForm.getAttribute("data-job-id");
+        var submitBtn = searchForm.querySelector("button[type=submit]");
+        if (submitBtn) submitBtn.disabled = true;
+        post("/jobs/" + jobId + "/search", new FormData(searchForm))
+          .then(function (res) {
+            return res.text();
+          })
+          .then(function (html) {
+            var old = root.querySelector("#candidatesWrap");
+            if (!old) return;
+            var wrapper = document.createElement("div");
+            wrapper.innerHTML = html;
+            var next = wrapper.firstElementChild;
+            old.replaceWith(next);
+            wireCandidateInteractions(root, next);
+            // Mirror the initial automatic search: the top new result is
+            // pre-selected, so click it to carry those fields (asin
+            // included) into the confirm form below, same as a manual click.
+            var firstCard = next.querySelector(".candidate");
+            if (firstCard) firstCard.click();
+          })
+          .finally(function () {
+            if (submitBtn) submitBtn.disabled = false;
           });
-          card.classList.add("selected");
-          var idx = parseInt(card.getAttribute("data-cand"), 10);
-          var c = candidates[idx];
-          if (!c) return;
-          var form = root.querySelector("[data-confirm-form]");
-          if (!form) return;
-          ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"].forEach(
-            function (field) {
-              var input = form.querySelector('[name="' + field + '"]');
-              if (input) input.value = c[field] || "";
-            }
-          );
-        });
-        card.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            card.click();
-          }
-        });
       });
     }
 

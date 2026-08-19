@@ -1,0 +1,27 @@
+{# Candidate match list for the metadata review step. Included by
+   _panel.html for the initial render (right after start_job()'s automatic
+   search), and re-rendered standalone by POST /jobs/{id}/search when the
+   user runs a manual search from the review step. app.js swaps this
+   fragment's outerHTML back into the panel and re-wires its candidate
+   click handlers - see wireCandidateInteractions() in app.js.
+
+   data-candidates-json must keep carrying every field the confirm form can
+   be populated from, asin included: app.js's candidate-click handler only
+   ever copies fields that exist in this JSON blob into the confirm form
+   below, so dropping one here silently makes it unreachable from the UI
+   even if the route/model behind it is correct. #}
+<div class="candidates" id="candidatesWrap" data-candidates-json='{{ job.candidates|tojson }}'>
+  {% for c in job.candidates %}
+  <div class="candidate{% if loop.first %} selected{% endif %}" data-cand="{{ loop.index0 }}">
+    {% if c.cover_url %}<span class="cand-cover"><img src="{{ c.cover_url }}" alt=""></span>
+    {% else %}<span class="cand-cover" style="background:{{ c.title|cover_gradient }};">{{ c.title|monogram }}</span>{% endif %}
+    <div class="cand-info">
+      <div class="cand-title">{{ c.title }}</div>
+      <div class="cand-sub">{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}</div>
+    </div>
+    <span class="cand-radio"></span>
+  </div>
+  {% else %}
+  <p class="waiting-note">No candidate matches found. Enter details manually below.</p>
+  {% endfor %}
+</div>

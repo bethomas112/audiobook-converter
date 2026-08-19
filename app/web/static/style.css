@@ -260,6 +260,16 @@ a{color:inherit;}
 
 /* ---- candidates ---- */
 .section-label{font-family:var(--font-mono); font-size:0.72rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted-dim); margin:1.4rem 0 0.7rem;}
+.search-form{display:flex; gap:0.6rem; align-items:center; margin-bottom:1.1rem;}
+.search-field{
+  flex:1; min-width:0; font-size:0.9rem; font-family:var(--font-body); color:var(--paper);
+  background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--radius-sm);
+  padding:0.55rem 0.75rem;
+}
+.search-field::placeholder{color:var(--muted-dim);}
+.search-field:hover{border-color:var(--hairline-strong);}
+.search-field:focus{outline:none; border-color:var(--amber); background:rgba(242,169,60,0.06);}
+.search-form .btn{flex:none; padding:0.55rem 1rem;}
 .candidates{display:flex; flex-direction:column; gap:0.6rem;}
 .candidate{
   display:flex; gap:0.85rem; align-items:center; padding:0.75rem; border-radius:var(--radius-sm);

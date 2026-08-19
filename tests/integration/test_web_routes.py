@@ -156,6 +156,90 @@ def test_confirm_endpoint_manual_entry_with_no_candidates_works(client):
     assert Job.get_by_id(job.id).selected_metadata["title"] == "Hand Typed Title"
 
 
+def test_search_endpoint_updates_candidates_and_renders_them(client, monkeypatch):
+    """A manual search from the review step should overwrite job.candidates
+    with fresh results and hand back HTML containing those results, so
+    app.js can swap the candidates portion of the panel in place.
+    """
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(
+        source_path="/x",
+        status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        title_guess="bad guess",
+        author_guess="",
+    )
+
+    def fake_search(title, author, **kwargs):
+        assert title == "The Real Title"
+        assert author == "The Real Author"
+        return [
+            {
+                "asin": "B0999999999",
+                "title": "The Real Title",
+                "author": "The Real Author",
+                "narrator": "",
+                "series": "",
+                "series_index": "",
+                "year": "2020",
+                "description": "",
+                "cover_url": "",
+                "genre": "",
+            }
+        ]
+
+    monkeypatch.setattr(metadata_mod, "search", fake_search)
+
+    resp = client.post(
+        f"/jobs/{job.id}/search",
+        data={"title": "The Real Title", "author": "The Real Author"},
+    )
+    assert resp.status_code == 200
+    assert "The Real Title" in resp.text
+
+    job = Job.get_by_id(job.id)
+    assert job.candidates[0]["title"] == "The Real Title"
+    assert job.candidates[0]["asin"] == "B0999999999"
+
+
+def test_search_endpoint_response_carries_candidate_asin(client, monkeypatch):
+    """Regression guard for the asin-dropping bug class: the fragment a
+    manual search returns must embed asin in its data-candidates-json,
+    exactly like the initial panel render does, since app.js's
+    candidate-click handler only ever reads asin out of that JSON blob.
+    """
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    monkeypatch.setattr(
+        metadata_mod,
+        "search",
+        lambda title, author, **kwargs: [
+            {"title": "The Calamity Club", "author": "A. Author", "asin": "B0123456789"}
+        ],
+    )
+
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "calamity club"})
+    assert resp.status_code == 200
+    assert "data-candidates-json" in resp.text
+    assert "B0123456789" in resp.text
+
+
+def test_search_endpoint_404_for_missing_job(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    monkeypatch.setattr(metadata_mod, "search", lambda title, author, **kwargs: [])
+    resp = client.post("/jobs/99999/search", data={"title": "x"})
+    assert resp.status_code == 404
+
+
+def test_search_endpoint_requires_title_or_author(client):
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "", "author": ""})
+    assert resp.status_code == 400
+
+
 def test_cancel_endpoint(client):
     job = Job.create(source_path="/x", status=Job.STATUS_READY, queue_order=1)
     resp = client.post(f"/jobs/{job.id}/cancel")
