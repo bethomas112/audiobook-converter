@@ -338,6 +338,10 @@ details.chapters[open] summary .chev{transform:rotate(90deg);}
 .chapter-row:first-child{border-top:none;}
 .chapter-time{font-family:var(--font-mono); font-size:0.78rem; color:var(--muted-dim); flex:none; width:70px; font-variant-numeric:tabular-nums;}
 .chapter-more{padding:0.5rem 0; text-align:center; font-family:var(--font-mono); font-size:0.72rem; color:var(--muted-dim); font-style:italic; border-top:1px solid var(--hairline);}
+.chapters-more{list-style:none;}
+.chapters-more > summary{cursor:pointer; list-style:none; transition:color 0.15s ease;}
+.chapters-more > summary::-webkit-details-marker{display:none;}
+.chapters-more > summary:hover{color:var(--muted);}
 
 /* ---- done state ---- */
 .fact-grid{display:grid; grid-template-columns:repeat(3, 1fr); gap:0.9rem; margin-top:1.3rem;}

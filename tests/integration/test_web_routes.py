@@ -67,6 +67,24 @@ def test_fragment_panel_confirm_form_carries_candidate_asin(client):
     assert 'name="asin" value="B0123456789"' in resp.text
 
 
+@pytest.mark.parametrize("status", [Job.STATUS_AWAITING_METADATA_CONFIRM, Job.STATUS_PROCESSING])
+def test_fragment_panel_chapter_preview_includes_all_chapters(client, status):
+    """Regression test for the "N more chapters" line in _chapters.html
+    (included by both the awaiting_metadata_confirm and processing branches
+    of _panel.html) being a dead end: the full chapter list must be present
+    in the rendered HTML - just past the first 6, inside the nested
+    <details class="chapters-more"> - so the "more chapters" control has
+    something to actually reveal instead of the count being pure decoration.
+    """
+    chapters = [{"start_sec": i * 60, "title": f"Chapter {i}"} for i in range(1, 10)]
+    job = Job.create(source_path="/x", status=status, chapters_preview=chapters)
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    for chapter in chapters:
+        assert chapter["title"] in resp.text
+    assert 'class="chapters-more"' in resp.text
+
+
 def test_fragment_panel_for_missing_job_is_404(client):
     resp = client.get("/fragments/panel/99999")
     assert resp.status_code == 404
