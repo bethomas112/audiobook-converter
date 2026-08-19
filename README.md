@@ -94,7 +94,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `LIBRARY_FILENAME_TEMPLATE` | Filename template, `library` mode only | `{title} ({year})[ ({series} #{series_index})]` |
 | `WRITE_SIDECAR_FILES` | Write `desc.txt`/`reader.txt`/`cover.jpg`; `library` mode only | `false` |
 | `SOURCE_CLEANUP_MODE` | `archive`, `delete`, or `keep` | `archive` |
-| `ARCHIVE_RETENTION_DAYS` | Auto-purge window for archived originals; unset = keep forever | unset |
+| `ARCHIVE_RETENTION_DAYS` | Auto-purge window for archived originals; unset/`0` = keep forever | `30` |
 | `AUTO_START_PROCESSING` | Skip the manual "look it up" step and start detection/metadata search immediately | `false` |
 | `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match | `false` |
 | `MIN_BITRATE_KBPS` | Informational floor (kbps); sources below it still convert (always at their own bitrate), just flagged in the log | `128` |

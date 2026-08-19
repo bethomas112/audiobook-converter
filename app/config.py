@@ -44,7 +44,7 @@ class Config:
         self.WRITE_SIDECAR_FILES = _bool(os.environ.get("WRITE_SIDECAR_FILES", "false"))
 
         self.SOURCE_CLEANUP_MODE = os.environ.get("SOURCE_CLEANUP_MODE", "archive")
-        self.ARCHIVE_RETENTION_DAYS = _int_or_none(os.environ.get("ARCHIVE_RETENTION_DAYS", ""))
+        self.ARCHIVE_RETENTION_DAYS = _int_or_none(os.environ.get("ARCHIVE_RETENTION_DAYS", "30"))
 
         self.AUTO_START_PROCESSING = _bool(os.environ.get("AUTO_START_PROCESSING", "false"))
         self.AUTO_CONFIRM_METADATA = _bool(os.environ.get("AUTO_CONFIRM_METADATA", "false"))
