@@ -7,7 +7,13 @@ import re
 import pytest
 
 from app.pipeline import ffutil
-from tests.helpers import make_m4b, make_tone_mp3, make_tone_silence_pattern_mp3
+from tests.helpers import (
+    has_quicktime_chapter_text_track,
+    make_m4b,
+    make_tone_mp3,
+    make_tone_silence_pattern_mp3,
+    strip_quicktime_chapter_track,
+)
 
 
 def test_get_duration_sec_matches_generated_length(tmp_path):
@@ -67,6 +73,44 @@ def test_inject_chapters_ffmetadata_writes_readable_chapters(tmp_path):
     ffutil.inject_chapters_ffmetadata(f, chapters)
     result = ffutil.get_embedded_chapters(f)
     assert [c["title"] for c in result] == ["Part One", "Part Two"]
+
+
+def test_inject_chapters_ffmetadata_writes_quicktime_chapter_track(tmp_path):
+    """ffprobe's -show_chapters (get_embedded_chapters) can't tell a
+    QuickTime-style chapter track apart from the legacy Nero 'chpl' atom -
+    both read back the same chapter list. This is the atom-level check:
+    inject_chapters_ffmetadata must write the actual QuickTime track (the
+    structure Apple's Books/Music/Podcasts/QuickTime need for real chapter
+    titles instead of generic "1", "2", "3" numbering), not just chpl.
+    """
+    f = make_m4b(tmp_path / "book.m4b", duration_sec=3.0)
+    chapters = [
+        {"start_sec": 0.0, "end_sec": 1.5, "title": "Part One"},
+        {"start_sec": 1.5, "end_sec": 3.0, "title": "Part Two"},
+    ]
+    ffutil.inject_chapters_ffmetadata(f, chapters)
+    assert ffutil.has_quicktime_chapter_track(f) is True
+    assert has_quicktime_chapter_text_track(f) is True  # independent raw-box confirmation
+
+
+def test_has_quicktime_chapter_track_false_for_plain_file(tmp_path):
+    f = make_m4b(tmp_path / "plain.m4b", duration_sec=2.0)
+    assert ffutil.has_quicktime_chapter_track(f) is False
+
+
+def test_has_quicktime_chapter_track_false_when_only_chpl_atom_present(tmp_path):
+    """Simulates a source .m4b from some other/older ffmpeg-based tool that
+    only ever wrote the legacy Nero chpl atom (a real, historically common
+    gap) - the exact case this pipeline's chapter-track repair exists for.
+    """
+    chapters = [{"start_sec": 0.0, "end_sec": 2.0, "title": "Ch1"}]
+    f = make_m4b(tmp_path / "legacy.m4b", duration_sec=2.0, chapters=chapters)
+    assert ffutil.has_quicktime_chapter_track(f) is True  # make_m4b writes both by default
+
+    strip_quicktime_chapter_track(f)
+    assert has_quicktime_chapter_text_track(f) is False  # confirm the fixture is now chpl-only
+    assert ffutil.get_embedded_chapters(f) == [{"start_sec": 0.0, "end_sec": 2.0, "title": "Ch1"}]  # data intact
+    assert ffutil.has_quicktime_chapter_track(f) is False
 
 
 def test_transcode_to_aac_m4b_single_file_produces_correct_duration(tmp_path):

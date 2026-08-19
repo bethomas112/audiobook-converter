@@ -15,7 +15,12 @@ from app.pipeline import metadata as metadata_mod
 from app import queue as queue_mod
 from mutagen.mp4 import MP4
 
-from tests.helpers import make_m4b, make_tone_mp3
+from tests.helpers import (
+    has_quicktime_chapter_text_track,
+    make_m4b,
+    make_tone_mp3,
+    strip_quicktime_chapter_track,
+)
 
 
 def _run_job_to_completion(monkeypatch, source_path, selected_metadata, candidates=None, chapters_from_audnexus=None):
@@ -144,6 +149,57 @@ def test_m4b_passthrough_pipeline_preserves_embedded_chapters_untouched(isolated
     # (a real transcode of a 96kbps tone would change these).
     assert ffutil.get_audio_bitrate_kbps(dest) == source_bitrate
     assert ffutil.get_duration_sec(dest) == 2.0 or abs(ffutil.get_duration_sec(dest) - 2.0) < 0.05
+
+
+def test_m4b_passthrough_repairs_chapters_missing_quicktime_track(isolated_dirs, monkeypatch, huey_immediate):
+    """Regression test for the real-world bug this fix addresses: a
+    converted .m4b whose chapters read back correctly via ffprobe (Nero
+    'chpl' atom) but show only generic "1", "2", "3" numbering - not the
+    real titles - in the macOS Books app, because the source file was
+    missing the QuickTime-style chapter track Apple's own apps need for
+    titles.
+
+    Simulates a source .m4b produced by some other/older ffmpeg-based tool
+    that only ever wrote chpl (tests.helpers.strip_quicktime_chapter_track).
+    The pipeline must detect the missing track (chapters.resolve_chapters +
+    ffutil.has_quicktime_chapter_track) and repair it via
+    ffutil.inject_chapters_ffmetadata - which, unlike a plain ffprobe
+    chapter-list check, is verified here at the raw MP4 box level, since
+    ffprobe's -show_chapters cannot tell the two formats apart (that's
+    exactly why the original bug shipped unnoticed through this suite's
+    prior ffprobe-only chapter assertions).
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
+    monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{title}")
+
+    source = isolated_dirs["inbox"] / "Legacy Chaptered Book.m4b"
+    original_chapters = [
+        {"start_sec": 0.0, "end_sec": 1.0, "title": "Prologue: Birdie"},
+        {"start_sec": 1.0, "end_sec": 2.0, "title": "Author's Note"},
+    ]
+    make_m4b(source, duration_sec=2.0, chapters=original_chapters)
+    strip_quicktime_chapter_track(source)
+    assert has_quicktime_chapter_text_track(source) is False  # confirm the fixture is chpl-only
+
+    meta = {
+        "asin": "", "title": "Legacy Chaptered Book", "author": "", "narrator": "",
+        "series": "", "series_index": "", "year": "", "genre": "", "description": "", "cover_url": "",
+    }
+    job = _run_job_to_completion(monkeypatch, source, meta)
+
+    assert job.status == Job.STATUS_DONE, job.log
+    dest = Path(job.destination_path)
+
+    from app.pipeline import ffutil
+    embedded = ffutil.get_embedded_chapters(dest)
+    assert [c["title"] for c in embedded] == ["Prologue: Birdie", "Author's Note"]
+
+    # The actual fix: the output now has the QuickTime-style chapter track,
+    # not just the chpl atom the source started with.
+    assert has_quicktime_chapter_text_track(dest) is True
+    assert ffutil.has_quicktime_chapter_track(dest) is True
 
 
 def test_m4b_without_embedded_chapters_uses_audnexus_chapters(isolated_dirs, monkeypatch, huey_immediate):

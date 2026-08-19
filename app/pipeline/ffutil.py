@@ -65,6 +65,38 @@ def get_embedded_chapters(path: Path) -> list[dict]:
     return chapters
 
 
+def has_quicktime_chapter_track(path: Path) -> bool:
+    """Does this M4B carry a QuickTime-style chapter track, not just the
+    legacy Nero-style 'chpl' atom?
+
+    MP4/M4B has two independent, coexisting ways to store chapters:
+    - a Nero-style 'chpl' atom under moov/udta (a flat list of offset+title
+      pairs) - what ffprobe's -show_chapters reads regardless of which
+      format(s) are present, and what every other player (VLC, Kodi,
+      mp4chaps) reads fine.
+    - a QuickTime-style chapter *track*: a text-sample trak referenced from
+      the audio trak via <tref><chap>. Apple's own apps (Books, Music,
+      Podcasts, QuickTime) need this specifically to show real chapter
+      *titles* - lacking it, they still see the right chapter *count* and
+      *boundaries* (from other duration/index metadata) but fall back to
+      generic "1", "2", "3" numbering for the titles.
+
+    ffutil.inject_chapters_ffmetadata() (below) already writes both when it
+    runs - this only matters for a source that already had chapters written
+    by something else (e.g. an older ffmpeg build, or other audiobook
+    tooling) before ever reaching this pipeline.
+
+    ffprobe can tell the two cases apart even though -show_chapters can't:
+    a QuickTime chapter track shows up as its own extra stream, distinct
+    from the audio stream, carrying the MP4 'text' sample-description tag.
+    """
+    info = probe(path)
+    return any(
+        stream.get("codec_type") != "audio" and stream.get("codec_tag_string") == "text"
+        for stream in info.get("streams", [])
+    )
+
+
 def run_silencedetect(path: Path, threshold_db: str, min_duration_sec: float) -> str:
     """Run ffmpeg's silencedetect filter and return its stderr (where the results are logged)."""
     result = _run(

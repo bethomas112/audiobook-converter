@@ -1,7 +1,15 @@
 """Chapter resolution, in priority order:
 
   1. Embedded chapters already present in an M4B input -> left untouched,
-     signalled here by returning None (caller must not modify chapters).
+     signalled here by returning None (caller must not modify chapters) -
+     UNLESS the source is missing the QuickTime-style chapter track Apple's
+     own apps (Books, Music, Podcasts, QuickTime) need to show real titles
+     instead of falling back to generic "1", "2", "3" numbering (see
+     ffutil.has_quicktime_chapter_track's docstring). In that case the same
+     chapter data is returned for re-injection instead of None, so the
+     caller rewrites it through ffutil.inject_chapters_ffmetadata() - which
+     always writes both formats - picking up the missing track without
+     altering the chapter times/titles the source already had.
   2. Official audnexus chapter timestamps for the matched title, if the
      input didn't already have its own chapters.
   3. Source-file boundaries, when the input was multiple discrete audio
@@ -24,7 +32,13 @@ def resolve_chapters(
     asin: str | None,
 ) -> list[dict] | None:
     if source_type == "m4b_single" and has_embedded_chapters:
-        return None
+        if ffutil.has_quicktime_chapter_track(output_path):
+            return None
+        # The source's chapters are readable (ffprobe/chpl) but the file is
+        # missing the QuickTime-style track Apple's apps need for real
+        # titles. Re-inject the same data through our own chapter-writing
+        # path (still a -codec copy remux, no audio re-encode) to add it.
+        return ffutil.get_embedded_chapters(output_path)
 
     if asin:
         audnexus_chapters = metadata.get_chapters(asin)

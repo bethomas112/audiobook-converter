@@ -24,9 +24,10 @@ from app.pipeline.chapters import (
 
 
 def test_priority_1_embedded_chapters_wins_even_with_asin(monkeypatch):
-    """An M4B that already has its own chapters must be left alone - the
-    caller signal for "don't touch chapters" is a None return, even when
-    an audnexus match (asin) is available.
+    """An M4B that already has its own chapters, AND already carries the
+    QuickTime-style chapter track Apple's apps need for real titles, must
+    be left alone - the caller signal for "don't touch chapters" is a None
+    return, even when an audnexus match (asin) is available.
     """
     called = {"audnexus": False}
 
@@ -35,11 +36,41 @@ def test_priority_1_embedded_chapters_wins_even_with_asin(monkeypatch):
         return [{"start_sec": 0, "end_sec": 10, "title": "Ch1"}]
 
     monkeypatch.setattr(chapters_mod.metadata, "get_chapters", fake_get_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
 
     result = resolve_chapters(
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
     )
     assert result is None
+    assert called["audnexus"] is False
+
+
+def test_priority_1_embedded_chapters_missing_quicktime_track_gets_repaired(monkeypatch):
+    """An M4B with its own chapters but missing the QuickTime-style chapter
+    track (e.g. written by an older/different tool that only wrote the
+    legacy Nero 'chpl' atom - the real gap this repair exists for) must
+    have its existing chapter data returned for re-injection, not silently
+    passed through broken. audnexus must still not be consulted - the
+    source's own chapter *data* still wins, only the atom *format* needs
+    fixing.
+    """
+    called = {"audnexus": False}
+
+    def fake_get_chapters(asin):
+        called["audnexus"] = True
+        return [{"start_sec": 0, "end_sec": 10, "title": "WRONG - should not appear"}]
+
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", fake_get_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: False)
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [{"start_sec": 0, "end_sec": 10, "title": "Real Chapter Title"}],
+    )
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
+    )
+    assert result == [{"start_sec": 0, "end_sec": 10, "title": "Real Chapter Title"}]
     assert called["audnexus"] is False
 
 
