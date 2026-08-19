@@ -22,6 +22,29 @@
   var currentPanelId = null;
   var knownStatuses = {}; // job id -> status, used to detect structural changes while polling
 
+  // Mirrors _NEEDS_INPUT_STATUSES / _CONVERTING_STATUSES in app/web/routes.py.
+  var NEEDS_INPUT_STATUSES = [
+    "pending",
+    "queued",
+    "detecting",
+    "awaiting_metadata_confirm",
+    "failed",
+    "cancelled",
+  ];
+  var CONVERTING_STATUSES = ["ready", "processing"];
+
+  function updateLivePill(jobs) {
+    var pillText = document.getElementById("livePillText");
+    if (!pillText) return;
+    var convertingCount = 0;
+    var needsInputCount = 0;
+    jobs.forEach(function (j) {
+      if (CONVERTING_STATUSES.indexOf(j.status) !== -1) convertingCount++;
+      else if (NEEDS_INPUT_STATUSES.indexOf(j.status) !== -1) needsInputCount++;
+    });
+    pillText.textContent = convertingCount + " converting/queued · " + needsInputCount + " need input";
+  }
+
   function post(url, formData) {
     return fetch(url, { method: "POST", body: formData || new FormData() }).then(function (res) {
       if (!res.ok) throw new Error("Request failed: " + url);
@@ -265,6 +288,8 @@
         jobs.forEach(function (j) {
           byId[j.id] = j;
         });
+
+        updateLivePill(jobs);
 
         var structuralChange = false;
         var idsNow = Object.keys(byId);
