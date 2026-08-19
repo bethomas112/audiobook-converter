@@ -93,9 +93,19 @@ class Job(BaseModel):
     updated_at = DateTimeField(default=datetime.datetime.utcnow)
 
     def append_log(self, line: str):
+        """Narrow save (log + updated_at only) for the same reason
+        save_progress uses one: process_job holds a single Job instance for
+        a job's entire run and calls this repeatedly as the pipeline
+        progresses. A full save() here would re-persist whatever that
+        instance's other fields looked like when it was first loaded -
+        clobbering any out-of-band update to them made since, most
+        importantly cancel_requested, which cancel_job() sets directly in
+        the DB from the *other* process while a conversion is running.
+        """
         timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         self.log = f"{self.log}[{timestamp}] {line}\n"
-        self.touch_and_save()
+        self.updated_at = datetime.datetime.utcnow()
+        self.save(only=[Job.log, Job.updated_at])
 
     def touch_and_save(self):
         self.updated_at = datetime.datetime.utcnow()

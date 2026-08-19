@@ -78,6 +78,7 @@ def start_job(job_id: int):
         job.status = Job.STATUS_FAILED
         job.error_message = str(e)
         job.append_log(f"Failed during detection/metadata search: {e}")
+        job.touch_and_save()
 
 
 def _next_queue_order() -> int:
@@ -156,6 +157,7 @@ def cancel_job(job_id: int):
         job.status = Job.STATUS_CANCELLED
         job.queue_order = None
         job.append_log("Cancelled before conversion started.")
+        job.touch_and_save()
     elif job.status == Job.STATUS_PROCESSING:
         job.cancel_requested = True
         job.touch_and_save()
