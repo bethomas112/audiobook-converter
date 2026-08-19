@@ -48,6 +48,25 @@ def test_fragment_panel_for_existing_job(client):
     assert resp.status_code == 200
 
 
+def test_fragment_panel_confirm_form_carries_candidate_asin(client):
+    """Regression test for the confirm form silently dropping asin: the
+    server-rendered confirm form (app/web/templates/_panel.html) must embed
+    the top candidate's asin in a submittable field, since app.js's
+    candidate-click handler only ever overwrites fields that already exist
+    in the form. A form with a title/author input but no asin field would
+    make the bug in test_confirm_endpoint_persists_asin unreachable from the
+    real UI even if the route itself handles asin correctly.
+    """
+    job = Job.create(
+        source_path="/x",
+        status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        candidates_json='[{"title": "The Calamity Club", "author": "A. Author", "asin": "B0123456789"}]',
+    )
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert 'name="asin" value="B0123456789"' in resp.text
+
+
 def test_fragment_panel_for_missing_job_is_404(client):
     resp = client.get("/fragments/panel/99999")
     assert resp.status_code == 404
@@ -105,6 +124,25 @@ def test_confirm_endpoint_stages_metadata_and_queues_job(client):
     assert job.selected_metadata["title"] == "Confirmed Title"
     assert job.selected_metadata["author"] == "Confirmed Author"
     assert job.status in (Job.STATUS_READY, Job.STATUS_PROCESSING)
+
+
+def test_confirm_endpoint_persists_asin(client):
+    """Regression test: the confirm form must actually carry the selected
+    candidate's asin through to job.selected_metadata. Audnexus chapter
+    lookup in resolve_chapters() only fires `if asin:`, so a lost asin here
+    silently degrades every MP3 job to filename-based chapter titles instead
+    of Audible's real chapter list - see app/pipeline/chapters.py.
+    """
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    resp = client.post(
+        f"/jobs/{job.id}/confirm",
+        data={"title": "Confirmed Title", "author": "Confirmed Author", "asin": "B0123456789"},
+    )
+    assert resp.status_code == 200
+
+    job = Job.get_by_id(job.id)
+    assert job.selected_metadata["asin"] == "B0123456789"
 
 
 def test_confirm_endpoint_manual_entry_with_no_candidates_works(client):
