@@ -9,6 +9,7 @@ from peewee import (
     FloatField,
     IntegerField,
     Model,
+    OperationalError,
     SqliteDatabase,
     TextField,
 )
@@ -182,6 +183,16 @@ def _add_missing_columns():
     table_info) and ALTER TABLE ADD COLUMN for anything missing. Safe to
     run every time - it's a no-op once the column exists - and cheap
     enough not to warrant caching that fact anywhere.
+
+    Both OS processes (the web server and the Huey consumer - see
+    ARCHITECTURE.md's "Processes" section) call init_db() independently at
+    startup, so there's a narrow window where both could see a column
+    missing before either has added it: whichever ALTERs second would hit
+    SQLite's own "duplicate column name" error, since the check-then-act
+    here isn't atomic across connections. Since the outcome either process
+    was trying to reach (the column existing) is achieved either way,
+    that specific error is swallowed rather than left to crash the
+    process - anything else still propagates.
     """
     existing_columns = {row[1] for row in db.execute_sql(f"PRAGMA table_info({Job._meta.table_name})").fetchall()}
     for field in Job._meta.sorted_fields:
@@ -193,7 +204,11 @@ def _add_missing_columns():
         # ALTER TABLE statement.
         ctx = db.get_sql_context()
         column_ddl, params = ctx.sql(field.ddl(ctx)).query()
-        db.execute_sql(f"ALTER TABLE {Job._meta.table_name} ADD COLUMN {column_ddl}", params)
+        try:
+            db.execute_sql(f"ALTER TABLE {Job._meta.table_name} ADD COLUMN {column_ddl}", params)
+        except OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
 
 
 def init_db():
