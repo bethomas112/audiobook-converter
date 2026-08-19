@@ -343,9 +343,18 @@ details.chapters[open] summary .chev{transform:rotate(90deg);}
 .chapter-time{font-family:var(--font-mono); font-size:0.78rem; color:var(--muted-dim); flex:none; width:70px; font-variant-numeric:tabular-nums;}
 .chapter-more{padding:0.5rem 0; text-align:center; font-family:var(--font-mono); font-size:0.72rem; color:var(--muted-dim); font-style:italic; border-top:1px solid var(--hairline);}
 .chapters-more{list-style:none;}
-.chapters-more > summary{cursor:pointer; list-style:none; transition:color 0.15s ease;}
+.chapters-more > summary{cursor:pointer; list-style:none; transition:color 0.15s ease; order:0;}
 .chapters-more > summary::-webkit-details-marker{display:none;}
 .chapters-more > summary:hover{color:var(--muted);}
+/* Expanded state: flex-reorder the same <summary> to the bottom of the
+   revealed rows and swap its content for a lone caret, so it reads as a
+   collapse control instead of leaving the stale "N more chapters" text
+   sitting above content it no longer describes. */
+.chapters-more[open]{display:flex; flex-direction:column;}
+.chapters-more[open] > summary{order:1;}
+.chapters-more[open] .chapter-more-text{display:none;}
+.chapter-more-collapse{display:none; font-size:0.95rem; transform:rotate(-90deg);}
+.chapters-more[open] .chapter-more-collapse{display:inline-block;}
 
 /* ---- done state ---- */
 .fact-grid{display:grid; grid-template-columns:repeat(3, 1fr); gap:0.9rem; margin-top:1.3rem;}
