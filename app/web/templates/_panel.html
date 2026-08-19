@@ -80,6 +80,7 @@
           <div class="field-row"><span class="field-label">Genre</span><input class="field-value" name="genre" value="{{ c0.genre or '' }}"></div>
           <input type="hidden" name="cover_url" value="{{ c0.cover_url or '' }}">
           <input type="hidden" name="description" value="{{ c0.description or '' }}">
+          <input type="hidden" name="asin" value="{{ c0.asin or '' }}">
         </div>
 
         {% if job.chapters_preview %}

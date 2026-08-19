@@ -228,7 +228,7 @@
           if (!c) return;
           var form = root.querySelector("[data-confirm-form]");
           if (!form) return;
-          ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description"].forEach(
+          ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"].forEach(
             function (field) {
               var input = form.querySelector('[name="' + field + '"]');
               if (input) input.value = c[field] || "";
