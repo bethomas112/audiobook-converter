@@ -77,6 +77,7 @@ def test_product_to_candidate_maps_all_review_fields():
         "release_date": "2006-07-17",
         "merchandising_summary": "<b>A boy</b> and a plan.",
         "product_images": {"500": "cover.jpg"},
+        "runtime_length_min": 1479,
     }
     candidate = _product_to_candidate(product)
     assert candidate == {
@@ -90,6 +91,7 @@ def test_product_to_candidate_maps_all_review_fields():
         "description": "A boy and a plan.",
         "cover_url": "cover.jpg",
         "genre": "",
+        "runtime_minutes": 1479,
     }
 
 
@@ -98,6 +100,7 @@ def test_product_to_candidate_handles_missing_optional_fields():
     assert candidate["author"] == ""
     assert candidate["series"] == ""
     assert candidate["series_index"] == ""
+    assert candidate["runtime_minutes"] is None
 
 
 @respx.mock

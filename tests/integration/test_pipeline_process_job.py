@@ -318,6 +318,33 @@ def test_cancellation_mid_conversion_removes_partial_output_and_marks_cancelled(
     assert not list(isolated_dirs["work"].glob("*.m4b"))
 
 
+def test_detection_computes_total_source_duration(isolated_dirs, monkeypatch, huey_immediate):
+    """Enhancement: start_job() must probe and sum the real duration of
+    every audio file right after detection succeeds (not only later,
+    during conversion), so the metadata review step can show it next to a
+    candidate's official runtime and let a mismatched edition (e.g. an
+    abridged match against an unabridged source) be spotted before
+    confirming.
+    """
+    from app.pipeline import metadata as metadata_mod
+
+    monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [])
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: [])
+
+    source = isolated_dirs["inbox"] / "Multi Duration Book"
+    source.mkdir()
+    make_tone_mp3(source / "track1.mp3", duration_sec=1.0)
+    make_tone_mp3(source / "track2.mp3", duration_sec=1.5)
+
+    job = Job.create(source_path=str(source))
+    queue_mod.start_job(job.id)
+    job = Job.get_by_id(job.id)
+
+    assert job.status == Job.STATUS_AWAITING_METADATA_CONFIRM, job.log
+    assert job.source_duration_sec is not None
+    assert abs(job.source_duration_sec - 2.5) < 0.2
+
+
 def test_failed_detection_marks_job_failed_not_crash(isolated_dirs, monkeypatch, huey_immediate):
     """A source that fails detection (e.g. an unsupported extension slipped
     past the watcher somehow) must land in 'failed' with a log/error

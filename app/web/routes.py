@@ -86,6 +86,33 @@ templates.env.filters["cover_gradient"] = _cover_gradient
 templates.env.filters["monogram"] = _monogram
 
 
+# Duration display for the metadata review step: a candidate's official
+# runtime (app/pipeline/metadata.py's runtime_minutes) and a source's actual
+# probed duration (app/db.py's Job.source_duration_sec) are shown side by
+# side there so a mismatched edition is visible before confirming - see
+# _candidates.html and _panel.html's awaiting_metadata_confirm branch.
+def _format_duration_minutes(total_minutes) -> str:
+    if not total_minutes:
+        return ""
+    total_minutes = round(total_minutes)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
+def _format_duration_seconds(total_seconds) -> str:
+    if not total_seconds:
+        return ""
+    return _format_duration_minutes(total_seconds / 60)
+
+
+templates.env.filters["duration_minutes"] = _format_duration_minutes
+templates.env.filters["duration_seconds"] = _format_duration_seconds
+
+
 def require_auth(credentials: HTTPBasicCredentials = Depends(_basic_auth)):
     if config.WEB_UI_AUTH != "basic":
         return

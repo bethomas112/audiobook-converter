@@ -85,6 +85,27 @@ def test_fragment_panel_chapter_preview_includes_all_chapters(client, status):
     assert 'class="chapters-more"' in resp.text
 
 
+def test_fragment_panel_shows_candidate_and_source_durations_side_by_side(client):
+    """Enhancement: runtime/duration must be visible during metadata review,
+    not just discoverable after conversion - so a mismatched edition (e.g.
+    an abridged audiobook candidate matched against an unabridged source)
+    can be spotted at a glance. Both numbers must appear in the same
+    rendered panel: the candidate's official runtime (_candidates.html) and
+    the source's actual probed duration (_panel.html).
+    """
+    job = Job.create(
+        source_path="/x",
+        status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        source_duration_sec=28 * 3600,  # a 28-hour unabridged source...
+        candidates_json='[{"title": "The Calamity Club", "author": "A. Author", '
+        '"asin": "B0123456789", "runtime_minutes": 480}]',  # ...matched against an 8-hour candidate
+    )
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200
+    assert "source runs 28h" in resp.text
+    assert "8h" in resp.text
+
+
 def test_fragment_panel_for_missing_job_is_404(client):
     resp = client.get("/fragments/panel/99999")
     assert resp.status_code == 404
