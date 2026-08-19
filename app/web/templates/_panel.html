@@ -46,22 +46,18 @@
         </div>
       </div>
 
-      <div class="section-label">Which one is this?</div>
-      <div class="candidates" data-candidates-json='{{ job.candidates|tojson }}'>
-        {% for c in job.candidates %}
-        <div class="candidate{% if loop.first %} selected{% endif %}" data-cand="{{ loop.index0 }}">
-          {% if c.cover_url %}<span class="cand-cover"><img src="{{ c.cover_url }}" alt=""></span>
-          {% else %}<span class="cand-cover" style="background:{{ c.title|cover_gradient }};">{{ c.title|monogram }}</span>{% endif %}
-          <div class="cand-info">
-            <div class="cand-title">{{ c.title }}</div>
-            <div class="cand-sub">{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}</div>
-          </div>
-          <span class="cand-radio"></span>
-        </div>
-        {% else %}
-        <p class="waiting-note">No candidate matches found. Enter details manually below.</p>
-        {% endfor %}
+      <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>Not the right book?</span>
+        <span class="hint">search again with your own terms</span>
       </div>
+      <form data-search-form data-job-id="{{ job.id }}" class="search-form">
+        <input class="search-field" name="title" placeholder="Title" value="{{ job.title_guess or '' }}">
+        <input class="search-field" name="author" placeholder="Author" value="{{ job.author_guess or '' }}">
+        <button type="submit" class="btn btn-ghost">Search</button>
+      </form>
+
+      <div class="section-label">Which one is this?</div>
+      {% include "_candidates.html" %}
 
       <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
         <span>What we&rsquo;ll write to the file</span>
