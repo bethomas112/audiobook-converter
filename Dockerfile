@@ -15,6 +15,12 @@ RUN chmod +x entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8000
+# Static, not wired to $PORT: EXPOSE is documentation-only to Docker (it
+# doesn't control what port the container actually binds to) - the real
+# binding is entrypoint.sh's `uvicorn --port` plus docker-compose.yml's
+# `ports:` mapping, both driven by $PORT at runtime. Parameterizing this
+# with an ARG/ENV would add complexity with no functional effect, so it's
+# kept static at the default.
+EXPOSE 2012
 
 ENTRYPOINT ["./entrypoint.sh"]

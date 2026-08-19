@@ -5,7 +5,7 @@ services:
     container_name: audiobook-pipeline-e2e
     restart: "no"
     ports:
-      - "8001:8000"
+      - "8001:2012"
     env_file:
       - e2e.env
     volumes:

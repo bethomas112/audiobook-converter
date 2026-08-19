@@ -1,6 +1,12 @@
 """Loads every env var listed in .env.example into a single Config object,
 applying the same defaults. See .env.example for what each one does -
 this module is deliberately just plumbing, not documentation.
+
+One exception: PORT is not loaded here. Nothing in the Python app reads
+its own port at runtime - uvicorn already knows it via entrypoint.sh's
+command line - so a Config field for it would be a no-op nobody consumes.
+It's read directly by entrypoint.sh and by docker-compose.yml's own
+variable substitution instead.
 """
 import os
 from pathlib import Path
