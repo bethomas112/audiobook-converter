@@ -35,6 +35,25 @@ testing against a real multi-hour conversion, not by inspection — the
 staleness only showed up under genuine cross-process load. WAL is the
 standard fix for this exact pattern.
 
+**Schema changes and existing databases.** `init_db()` (`app/db.py`)
+calls peewee's `create_tables([Job])`, which only *creates* the `job`
+table if it doesn't exist yet — it never alters an already-existing one
+to add columns for fields added to the `Job` model since. Left alone,
+that would break any deployment upgrading from an older version: the
+code would reference a column the on-disk table doesn't have. A small
+`_add_missing_columns()` runs right after `create_tables()` on every
+startup, diffing `Job`'s fields against `PRAGMA table_info()` and
+issuing `ALTER TABLE ADD COLUMN` for anything missing — a no-op once a
+column exists. Because both OS processes call `init_db()` independently
+at startup, there's a narrow window where both could see the same
+column missing before either adds it; whichever `ALTER`s second gets
+SQLite's own "duplicate column name" error, which is swallowed rather
+than left to crash that process, since the outcome either process
+wanted (the column existing) is reached either way. This is
+deliberately a single-table, additive-only check, not a general
+migration framework — it only handles nullable/defaulted columns, the
+same way `source_duration_sec` (see "Job lifecycle" below) was added.
+
 ## Job lifecycle
 
 Every drop-off is one row in the `Job` table (`app/db.py`), moving
@@ -62,6 +81,15 @@ A separate `dismissed` boolean (not a status) can be set on a job in
 almost any state, to hide it from the UI without deleting its row —
 `app/db.py`'s comment on that field explains why deleting outright would
 be a real bug (the watcher would re-detect the source file as new).
+
+Another separate, informational-only field: `source_duration_sec`, the
+sum of `ffutil.get_duration_sec()` across a job's audio files, computed
+once in `start_job()` right after `detect.detect()` succeeds. It exists
+purely so the metadata review step can show the source's actual runtime
+next to a candidate's official one (`app/pipeline/metadata.py`'s
+`runtime_minutes`) — a quick way to spot a mismatched edition (e.g. an
+abridged match against an unabridged source) before confirming, rather
+than only discovering it after conversion.
 
 The web UI's three groups are just this state machine viewed at a
 distance (`app/web/routes.py:_board_context`):
@@ -172,6 +200,17 @@ the frontend's job is fetching small fragments and swapping them in.
 - `GET /fragments/rail`, `/fragments/now-converting`, and
   `/fragments/panel/{id}` render the same partial templates standalone,
   for the frontend to re-fetch after an action.
+- `POST /jobs/{id}/search` re-runs the metadata search with user-supplied
+  title/author terms (for when the filename-derived guess was a bad
+  match) and returns the re-rendered `_candidates.html` fragment
+  directly, which `app.js` swaps in place — the one `POST /jobs/{id}/...`
+  route that doesn't just return `{"ok": true}`. `_candidates.html` and
+  `_chapters.html` are both factored out of `_panel.html` into their own
+  partials specifically so their markup (candidate data, including
+  `asin` — see the "asin" comment in `_candidates.html` for why that
+  matters — and the chapter-preview list) is defined in exactly one
+  place, included everywhere it's needed instead of duplicated per job
+  status.
 - Only **one** job's detail panel ever exists in the DOM at a time,
   loaded on demand when you select it. Earlier iterations of this UI
   pre-rendered every job's panel up front and toggled visibility with
@@ -180,9 +219,9 @@ the frontend's job is fetching small fragments and swapping them in.
   badly as job history grew). Fetching on demand removes the problem
   instead of managing it.
 - A lightweight poll (`GET /api/status`, every 2.5s) patches progress
-  numbers in place for the common case, and falls back to a full
-  rail+panel refresh only when a job's status actually changes groups or
-  the set of jobs changes.
+  numbers and the top-right status pill's counts in place for the common
+  case, and falls back to a full rail+panel refresh only when a job's
+  status actually changes groups or the set of jobs changes.
 
 Fonts (Spectral, IBM Plex Sans/Mono) are self-hosted static files under
 `app/web/static/fonts/`, not a CDN dependency — this is a LAN tool that
@@ -194,7 +233,7 @@ lookup itself.
 ```
 app/
   config.py           env vars -> Config object (see .env.example for what each does)
-  db.py               Job model, statuses, WAL setup
+  db.py               Job model, statuses, WAL setup, startup column migration
   watcher.py           inbox watcher (watchdog + settle-window polling)
   queue.py             Huey tasks + the dispatcher (see above)
   main.py               FastAPI app + lifespan (starts the watcher thread)
@@ -209,7 +248,8 @@ app/
     archive.py                source cleanup + retention purge
   web/
     routes.py             all HTTP routes (see its module docstring)
-    templates/             index.html + the _rail/_panel/_queue_item/_now_converting partials
+    templates/             index.html + the _rail/_panel/_queue_item/_now_converting/
+                            _candidates/_chapters partials
     static/                app.js, style.css, fonts.css, fonts/
 ```
 

@@ -18,23 +18,38 @@ how to run it.
    mid-write), it shows up in the **Needs Input** queue as "Waiting".
 2. **Look it up** — click "Find this book"; the tool guesses a
    title/author from the filename and searches for candidate matches,
-   each with cover art, author, narrator, series, and description.
+   each with cover art, author, narrator, series, description, and the
+   book's official runtime. Didn't find the right one? Search again with
+   your own title/author instead of the filename-derived guess.
 3. **Review** — pick a candidate (or none — the fields are always
    editable, so entering details manually is just leaving them as
-   typed) and confirm. Nothing is written until you do (or it's
-   configured to auto-confirm the top match).
+   typed) and confirm. The candidate's official runtime is shown next to
+   the source files' actual total duration, so a mismatched edition
+   (e.g. an abridged match against an unabridged source) is easy to spot
+   before confirming. A preview of the chapters that will be written is
+   also shown (expandable to see the full list, not just the first few).
+   Nothing is written until you confirm (or it's configured to
+   auto-confirm the top match).
 4. **Convert** — confirming queues the book; one book converts at a
    time, and you can reorder or cancel anything still waiting its turn.
    The book actually converting shows live progress in a persistent bar
    at the top of the page, visible no matter what else you're looking
    at, and can be cancelled mid-conversion.
-   - An M4B source is passed through **untouched** — no re-encode, no
-     remux, just a metadata-only tag patch.
+   - An M4B source's audio is passed through **untouched** — no
+     re-encode, ever. Its own embedded chapters and tags are normally
+     left alone too (just a metadata-only tag patch), *except* when the
+     source has chapters but is missing the QuickTime-style chapter
+     track Apple's own apps (Books, Music, Podcasts) need to show real
+     chapter titles — some other/older tools only write the legacy
+     format. In that one case the existing chapter data is rewritten
+     (still a `-codec copy` remux, no audio re-encode) to add the
+     missing track.
    - An MP3 source (or folder of them) is transcoded to AAC/M4B, always
      at the source's own bitrate (re-encoding higher can't add back
      quality that isn't there).
 5. **Chapters**, resolved in priority order:
-   1. Embedded chapters already in an M4B input — left as-is.
+   1. Embedded chapters already in an M4B input — left as-is (see the
+      QuickTime-chapter-track repair note above for the one exception).
    2. Official chapter data for the matched title, if the input didn't
       already have its own chapters.
    3. Source-file boundaries, for a multi-file MP3 source with no

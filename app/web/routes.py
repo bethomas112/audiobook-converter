@@ -1,4 +1,4 @@
-"""HTTP layer. Three kinds of routes, matching how app/web/static/app.js
+"""HTTP layer. Four kinds of routes, matching how app/web/static/app.js
 uses them:
 
   - GET /               the full page (topbar + rail + one detail panel)
@@ -8,8 +8,12 @@ uses them:
   - GET /api/status      a small JSON poll target - just id/status/progress
                           per job, cheap enough to hit every couple seconds
   - POST /jobs/{id}/...  actions (start, confirm, cancel, requeue, remove,
-                          reorder); all just return {"ok": true} and let
-                          the frontend re-fetch whatever fragments changed
+                          reorder, search); most just return {"ok": true}
+                          and let the frontend re-fetch whatever fragments
+                          changed - the exception is search, which returns
+                          the re-rendered _candidates.html fragment
+                          directly, since app.js swaps that one in place
+                          rather than re-fetching it separately
 
 _board_context() is the one place that queries and groups jobs by status;
 every route that renders a rail or panel builds its response from it, so
