@@ -5,7 +5,7 @@ services:
     container_name: audiobook-pipeline
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-2012}:${PORT:-2012}"
     env_file:
       - .env
     volumes:

@@ -87,7 +87,7 @@ working space, archive, output, and app config to actually live.
 docker compose up -d --build
 ```
 
-Then open `http://<host>:8000` and drop an audiobook into your configured
+Then open `http://<host>:2012` and drop an audiobook into your configured
 inbox folder.
 
 ## Configuration
@@ -121,6 +121,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `SETTLE_WINDOW_SEC` | How long a drop-off must be unchanged before it's queued | `10` |
 | `WEB_UI_AUTH` | `none` or `basic` | `none` |
 | `WEB_UI_USERNAME` / `WEB_UI_PASSWORD` | Only used when `WEB_UI_AUTH=basic` | unset |
+| `PORT` | Port the web UI is served on, both inside the container and on the host | `2012` |
 
 `WEB_UI_AUTH=none` is intended for a trusted LAN only — don't expose this
 tool directly to the internet.
