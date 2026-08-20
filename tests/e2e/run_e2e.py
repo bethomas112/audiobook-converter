@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 BASE_URL = "http://localhost:8001"
-CONTAINER = "audiobook-pipeline-e2e"
+CONTAINER = "audiobook-converter-e2e"
 E2E_DIR = Path(__file__).resolve().parent
 DATA_DIR = E2E_DIR / "data"
 

@@ -35,7 +35,7 @@ from app.pipeline import archive, chapters, convert, detect, ffutil, metadata, t
 config.ensure_dirs()
 init_db()
 
-huey = SqliteHuey("audiobook-pipeline", filename=str(config.CONFIG_DIR / "huey.db"))
+huey = SqliteHuey("audiobook-converter", filename=str(config.CONFIG_DIR / "huey.db"))
 
 
 @huey.task()

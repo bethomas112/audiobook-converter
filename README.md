@@ -95,7 +95,7 @@ Requires Docker and Docker Compose.
 
 ```bash
 git clone <this-repo-url>
-cd audiobook-pipeline
+cd audiobook-converter
 cp .env.example .env
 ```
 

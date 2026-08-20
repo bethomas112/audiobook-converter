@@ -16,14 +16,14 @@
 # paths already, so leave both sides alone unless you have a reason to
 # rename the internal mount points too.
 services:
-  audiobook-pipeline:
+  audiobook-converter:
     build: .
     # Builds the image from this repo's Dockerfile - there's no published,
     # pre-built image to pull instead (yet). If you set one up later (e.g.
     # via a CI workflow pushing to a registry), replace `build: .` above
-    # with `image: <your-registry>/audiobook-pipeline:<tag>`.
-    container_name: audiobook-pipeline
-    # Fixed name so `docker logs audiobook-pipeline` etc. work without
+    # with `image: <your-registry>/audiobook-converter:<tag>`.
+    container_name: audiobook-converter
+    # Fixed name so `docker logs audiobook-converter` etc. work without
     # looking up a generated container ID.
     restart: unless-stopped
     # Survives host reboots and restarts after a crash - there's no

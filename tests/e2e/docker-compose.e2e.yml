@@ -1,8 +1,8 @@
 services:
-  audiobook-pipeline-e2e:
+  audiobook-converter-e2e:
     build:
       context: ../..
-    container_name: audiobook-pipeline-e2e
+    container_name: audiobook-converter-e2e
     restart: "no"
     ports:
       - "8001:2012"
