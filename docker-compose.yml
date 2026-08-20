@@ -1,16 +1,42 @@
+# Sample compose file - this is the standard way to run the app (see
+# README.md's Quick Start). Before running `docker compose up -d --build`:
+#
+#   1. cp .env.example .env
+#      env_file below requires .env to exist, and it's where every
+#      configurable setting (paths, output naming, auth, etc.) lives - see
+#      .env.example for the full documented list.
+#   2. (Optional) Point the volumes below at wherever you actually want the
+#      inbox/work/archive/output/config folders to live on the host. The
+#      defaults (./data/*, relative to this file) work fine to try it out
+#      as-is - no edits needed for a first run.
+#
+# The container-internal side of each volume (the part after the colon)
+# must match the corresponding *_DIR variable in .env - INBOX_DIR,
+# WORK_DIR, ARCHIVE_DIR, OUTPUT_DIR, CONFIG_DIR all default to matching
+# paths already, so leave both sides alone unless you have a reason to
+# rename the internal mount points too.
 services:
   audiobook-pipeline:
     build: .
-    # image: ghcr.io/example/audiobook-pipeline:latest
+    # Builds the image from this repo's Dockerfile - there's no published,
+    # pre-built image to pull instead (yet). If you set one up later (e.g.
+    # via a CI workflow pushing to a registry), replace `build: .` above
+    # with `image: <your-registry>/audiobook-pipeline:<tag>`.
     container_name: audiobook-pipeline
+    # Fixed name so `docker logs audiobook-pipeline` etc. work without
+    # looking up a generated container ID.
     restart: unless-stopped
+    # Survives host reboots and restarts after a crash - there's no
+    # supervisor process expecting to manage this itself.
     ports:
       - "${PORT:-2012}:${PORT:-2012}"
+      # Host and container both use PORT from .env (default 2012) - change
+      # PORT there if 2012 is already taken on your host, not here.
     env_file:
       - .env
     volumes:
-      - ./data/inbox:/data/inbox
-      - ./data/work:/data/work
-      - ./data/archive:/data/archive
-      - ./data/output:/data/output
-      - ./data/config:/data/config
+      - ./data/inbox:/data/inbox     # drop audiobooks here to convert them
+      - ./data/work:/data/work       # scratch space during conversion
+      - ./data/archive:/data/archive # original sources land here after processing (SOURCE_CLEANUP_MODE=archive)
+      - ./data/output:/data/output   # finished, tagged audiobooks land here
+      - ./data/config:/data/config   # app database/settings - back this up, it's the only persistent state

@@ -1,0 +1,17 @@
+# Keeps the build context small and the image clean - the Dockerfile only
+# explicitly COPYs app/, entrypoint.sh, and requirements.txt anyway, but
+# without this, `docker build` still zips up and sends everything below to
+# the daemon on every build, which is slow once data/ has real audiobooks
+# in it.
+.git/
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.env
+.DS_Store
+tests/
+NEXT_STEPS.md

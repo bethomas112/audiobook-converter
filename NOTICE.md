@@ -1,6 +1,7 @@
 # Third-party code
 
-This project is otherwise original code, but one file is a substantial,
+This project's own code is MIT-licensed (see `LICENSE` at the repository
+root). It is otherwise original code, but one file is a substantial,
 mostly-verbatim port from another open-source project, included here per
 the terms of its license.
 

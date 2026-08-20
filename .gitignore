@@ -1,5 +1,8 @@
 .env
 data/
+# Internal session-handoff notes for whoever's picking up dev work next -
+# not meant for external readers, deliberately never committed.
+NEXT_STEPS.md
 *.db
 *.sqlite3
 __pycache__/

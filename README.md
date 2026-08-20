@@ -217,3 +217,9 @@ rather than mocking ffmpeg.
 
 See `NOTICE.md` for third-party code included in this project (the
 chapter-realignment algorithm, ported from achew).
+
+## License
+
+MIT — see [LICENSE](LICENSE). See [NOTICE.md](NOTICE.md) for the one
+vendored exception (the achew-derived chapter-realignment algorithm,
+also MIT-licensed) and its attribution.
