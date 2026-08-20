@@ -94,7 +94,7 @@ how to run it.
 Requires Docker and Docker Compose.
 
 ```bash
-git clone <this-repo-url>
+git clone git@github.com:bethomas112/audiobook-converter.git
 cd audiobook-converter
 cp .env.example .env
 ```
