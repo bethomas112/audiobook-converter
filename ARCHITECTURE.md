@@ -407,7 +407,20 @@ the frontend's job is fetching small fragments and swapping them in.
 - A lightweight poll (`GET /api/status`, every 2.5s) patches progress
   numbers and the top-right status pill's counts in place for the common
   case, and falls back to a full rail+panel refresh only when a job's
-  status actually changes groups or the set of jobs changes.
+  *render group* changes or the set of jobs changes. Render group, not raw
+  status: a small map in `app.js` collapses statuses that render
+  byte-identical HTML in `_panel.html`/`_queue_item.html` (currently just
+  `queued` and `detecting`, both "Looking it up…") into one group, so the
+  near-instant background `queued` → `detecting` transition doesn't cause
+  a purely-cosmetic reload. Action buttons (start/cancel/requeue/remove/
+  confirm/reorder) already trigger their own immediate refresh on click,
+  which would otherwise leave the poller's tracked baseline stale and
+  force a redundant second reload on the very next tick — each handler
+  resyncs that baseline from the DOM right after its own refresh settles
+  to avoid it. Every fragment swap (panel/rail/now-converting) is wrapped
+  in the View Transitions API when the browser supports it, so a real
+  reload cross-fades instead of popping; unsupported browsers just get an
+  instant swap as before.
 
 Fonts (Spectral, IBM Plex Sans/Mono) are self-hosted static files under
 `app/web/static/fonts/`, not a CDN dependency — this is a LAN tool that

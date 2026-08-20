@@ -10,17 +10,32 @@
 // Only one job's panel ever lives in the DOM at a time (see loadPanel) -
 // panels for jobs you're not looking at are never pre-rendered, so nothing
 // can go stale behind your back after a reorder or a background status
-// change. pollStatus() below is what notices those background changes: it
-// hits a cheap JSON endpoint every 2.5s, patches progress numbers in place
-// for the common case (nothing but percent/stage changed), and falls back
-// to a full refreshBoard() only when a job's status actually moved it
-// between groups or a job appeared/disappeared.
+// change. Every one of those DOM swaps (innerHTML/outerHTML/replaceWith) is
+// wrapped in document.startViewTransition() when the browser supports it,
+// so a real reload cross-fades instead of popping; browsers without the API
+// just get today's instant swap (see withViewTransition()).
+//
+// pollStatus() is what notices background changes: it hits a cheap JSON
+// endpoint every 2.5s, patches progress numbers in place for the common
+// case (nothing but percent/stage changed), and falls back to a full
+// refreshBoard() only when a job's *render group* changes (renderGroup()
+// below - it collapses statuses that render identical HTML, like `queued`
+// and `detecting`, so a purely-cosmetic backend transition between them
+// doesn't trigger a reload) or the set of jobs changes.
+//
+// Every action button (start/cancel/requeue/remove/confirm/reorder)
+// already triggers its own immediate refreshBoard() on click, which shows
+// the up-to-date state right away. Since that bypasses pollStatus(), each
+// of those handlers also calls syncKnownGroups() once the refresh settles,
+// so the tracked baseline matches what's already on screen - otherwise the
+// very next poll tick would compare against a stale pre-action group and
+// force a redundant second reload of state the user already saw.
 (function () {
   "use strict";
 
   var detail = document.getElementById("detail");
   var currentPanelId = null;
-  var knownStatuses = {}; // job id -> status, used to detect structural changes while polling
+  var knownGroups = {}; // job id -> render group, used to detect structural changes while polling
 
   // Mirrors _NEEDS_INPUT_STATUSES / _CONVERTING_STATUSES in app/web/routes.py.
   var NEEDS_INPUT_STATUSES = [
@@ -32,6 +47,68 @@
     "cancelled",
   ];
   var CONVERTING_STATUSES = ["ready", "processing"];
+
+  // Statuses that render byte-identical HTML in _panel.html/_queue_item.html
+  // share one render group here, so a background transition between them
+  // (e.g. queued -> detecting, which happens almost immediately once Huey
+  // picks a job up) isn't treated as a change worth reloading for. Every
+  // other status maps 1:1 to itself. Keep this in sync with the templates'
+  // `{% elif job.status in (...) %}` grouping - it doesn't change what
+  // renders, only what the poller considers "a change."
+  var STATUS_RENDER_GROUP = {
+    queued: "looking_up",
+    detecting: "looking_up",
+  };
+  function renderGroup(status) {
+    return STATUS_RENDER_GROUP[status] || status;
+  }
+
+  // Resyncs knownGroups to whatever's actually on screen right now, read
+  // straight from the rail's data-status attributes. Called after the
+  // DOMContentLoaded initial render and after every action-triggered
+  // refreshBoard() settles, so the next pollStatus() tick compares against
+  // the state the user already sees instead of a stale pre-action baseline.
+  function syncKnownGroups() {
+    var next = {};
+    document.querySelectorAll(".queue-item").forEach(function (i) {
+      next[i.getAttribute("data-target")] = renderGroup(i.getAttribute("data-status"));
+    });
+    knownGroups = next;
+  }
+
+  // Wraps a DOM-swapping callback in the View Transitions API when the
+  // browser supports it, so the swap cross-fades instead of popping.
+  // Browsers without the API just run the callback directly - today's
+  // behavior, zero risk.
+  //
+  // The API only allows one active transition on the document at a time -
+  // a second concurrent call aborts with an error instead of queueing. But
+  // refreshBoard() below fans out to three swaps that land close together
+  // (rail + now-converting concurrently, then the panel right after), so a
+  // naive per-call wrap here would collide with itself on every reload.
+  // `inTransition` is how refreshBoard() tells this function "there's
+  // already an outer transition running - just apply the change inline, it
+  // will be captured as part of that one" instead of starting a nested one.
+  //
+  // The browser can also abort a transition outright - most commonly
+  // because the document is hidden (pollStatus() keeps polling, and can
+  // trigger a reload, in a backgrounded tab) - which rejects its `ready`
+  // promise. The swap itself (run synchronously either way) still applies
+  // either way; only the animation is skipped. settleTransition() just
+  // keeps that rejection from surfacing as an uncaught promise error.
+  var inTransition = false;
+  function settleTransition(transition) {
+    transition.ready.catch(function () {});
+    transition.finished.catch(function () {});
+    return transition;
+  }
+  function withViewTransition(swap) {
+    if (inTransition || typeof document.startViewTransition !== "function") {
+      swap();
+      return;
+    }
+    settleTransition(document.startViewTransition(swap));
+  }
 
   function updateLivePill(jobs) {
     var pillText = document.getElementById("livePillText");
@@ -95,7 +172,9 @@
   // ---- panel loading (on demand - only one panel ever lives in the DOM) ----
   function loadPanel(jobId) {
     return getHtml("/fragments/panel/" + jobId).then(function (html) {
-      detail.innerHTML = html;
+      withViewTransition(function () {
+        detail.innerHTML = html;
+      });
       currentPanelId = String(jobId);
       buildAllWaveforms(detail);
       wirePanelInteractions(detail);
@@ -114,8 +193,10 @@
   // ---- rail + now-converting refresh ----
   function refreshRail() {
     return getHtml("/fragments/rail").then(function (html) {
-      var rail = document.getElementById("rail");
-      rail.outerHTML = html;
+      withViewTransition(function () {
+        var rail = document.getElementById("rail");
+        rail.outerHTML = html;
+      });
       wireRailInteractions();
       var activeItem = document.querySelector(".queue-item.active");
       if (activeItem) activeItem.classList.add("active");
@@ -129,7 +210,9 @@
       var next = wrapper.firstElementChild;
       var current = document.getElementById("nowConverting");
       if (current && next) {
-        current.replaceWith(next);
+        withViewTransition(function () {
+          current.replaceWith(next);
+        });
         buildAllWaveforms(document.querySelector(".topbar"));
         wireNowConverting();
       }
@@ -137,22 +220,44 @@
   }
 
   function refreshBoard(focusJobId) {
-    return Promise.all([refreshRail(), refreshNowConverting()]).then(function () {
-      if (!focusJobId) return;
-      var stillExists = document.querySelector('.queue-item[data-target="' + focusJobId + '"]');
-      if (stillExists) {
-        stillExists.classList.add("active");
-        return loadPanel(focusJobId);
-      }
-      var next = document.querySelector(".queue-item");
-      if (next) {
-        next.classList.add("active");
-        return loadPanel(next.getAttribute("data-target"));
-      }
-      detail.innerHTML =
-        '<div class="card"><p class="waiting-note">Nothing here yet. Drop an audiobook into the inbox folder to get started.</p></div>';
-      currentPanelId = null;
-    });
+    // Rail, now-converting, and (usually) the panel all swap together here.
+    // Run the whole sequence as ONE view transition rather than letting
+    // each swap above start its own - see the comment on withViewTransition
+    // for why three concurrent ones would collide - so a real reload
+    // cross-fades every region at once instead of three racing animations.
+    function run() {
+      return Promise.all([refreshRail(), refreshNowConverting()]).then(function () {
+        if (!focusJobId) return;
+        var stillExists = document.querySelector('.queue-item[data-target="' + focusJobId + '"]');
+        if (stillExists) {
+          stillExists.classList.add("active");
+          return loadPanel(focusJobId);
+        }
+        var next = document.querySelector(".queue-item");
+        if (next) {
+          next.classList.add("active");
+          return loadPanel(next.getAttribute("data-target"));
+        }
+        withViewTransition(function () {
+          detail.innerHTML =
+            '<div class="card"><p class="waiting-note">Nothing here yet. Drop an audiobook into the inbox folder to get started.</p></div>';
+        });
+        currentPanelId = null;
+      });
+    }
+
+    if (inTransition || typeof document.startViewTransition !== "function") {
+      return run();
+    }
+    inTransition = true;
+    var transition = settleTransition(
+      document.startViewTransition(function () {
+        return run().finally(function () {
+          inTransition = false;
+        });
+      })
+    );
+    return transition.updateCallbackDone;
   }
 
   // ---- rail interactions (selection, collapse, reorder) ----
@@ -189,7 +294,7 @@
         var fd = new FormData();
         fd.append("direction", direction);
         post("/jobs/" + jobId + "/reorder", fd).then(function () {
-          refreshBoard(currentPanelId);
+          return refreshBoard(currentPanelId).then(syncKnownGroups);
         });
       });
     });
@@ -311,7 +416,7 @@
         e.preventDefault();
         var jobId = confirmForm.getAttribute("data-job-id");
         post("/jobs/" + jobId + "/confirm", new FormData(confirmForm)).then(function () {
-          refreshBoard(jobId);
+          return refreshBoard(jobId).then(syncKnownGroups);
         });
       });
     }
@@ -332,7 +437,7 @@
         btn.disabled = true;
         post("/jobs/" + jobId + "/" + action)
           .then(function () {
-            refreshBoard(jobId);
+            return refreshBoard(jobId).then(syncKnownGroups);
           })
           .finally(function () {
             btn.disabled = false;
@@ -354,15 +459,16 @@
 
         var structuralChange = false;
         var idsNow = Object.keys(byId);
-        var idsBefore = Object.keys(knownStatuses);
+        var idsBefore = Object.keys(knownGroups);
         if (idsNow.length !== idsBefore.length) structuralChange = true;
 
         jobs.forEach(function (j) {
           var idStr = String(j.id);
-          if (knownStatuses[idStr] !== undefined && knownStatuses[idStr] !== j.status) {
+          var group = renderGroup(j.status);
+          if (knownGroups[idStr] !== undefined && knownGroups[idStr] !== group) {
             structuralChange = true;
           }
-          knownStatuses[idStr] = j.status;
+          knownGroups[idStr] = group;
 
           var chip = document.getElementById("q-status-" + j.id);
           if (chip && j.status === "processing") chip.textContent = j.progress_pct + "%";
@@ -386,7 +492,7 @@
           }
         });
 
-        Object.keys(knownStatuses).forEach(function (id) {
+        Object.keys(knownGroups).forEach(function (id) {
           if (!(id in byId)) structuralChange = true;
         });
 
@@ -403,9 +509,7 @@
     var activePanel = detail.querySelector(".panel[data-panel]");
     currentPanelId = activePanel ? activePanel.getAttribute("data-panel") : null;
 
-    document.querySelectorAll(".queue-item").forEach(function (i) {
-      knownStatuses[i.getAttribute("data-target")] = i.getAttribute("data-status");
-    });
+    syncKnownGroups();
 
     wireRailInteractions();
     wireNowConverting();
