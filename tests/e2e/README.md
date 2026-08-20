@@ -33,23 +33,16 @@ Tear down when done:
 docker compose -f docker-compose.e2e.yml down -v
 ```
 
-## Known issue: SQLite WAL + bind-mounted CONFIG_DIR
+## Why CONFIG_DIR is a named volume here too
 
-While building this test, a bind-mounted `CONFIG_DIR` (what the shipped
-top-level `docker-compose.yml` uses) reliably produced
-`sqlite3.OperationalError: disk I/O error` right after container start,
-on Docker Desktop for Mac - both the web process and the Huey consumer
-open a WAL-mode connection to `app.db` at startup, and the host↔VM
-filesystem-sharing layer (virtiofs) didn't handle that cleanly. Once hit,
-every request 500'd and it did **not** self-heal - the process stays
-alive so `restart: unless-stopped` never kicks in, and only a manual
-`docker restart` recovered it.
+While building this test, a *bind-mounted* `CONFIG_DIR` reliably produced
+`sqlite3.OperationalError: disk I/O error` right after container start on
+Docker Desktop for Mac, which doesn't self-heal on its own. Switching
+`CONFIG_DIR` to a named volume made it disappear completely - this
+directory's `docker-compose.e2e.yml` uses one for `config_data`, matching
+the same fix the shipped top-level `docker-compose.yml` now uses too.
 
-Switching `CONFIG_DIR` to a named volume made it disappear completely,
-which is why `docker-compose.e2e.yml` here uses one for `config_data`
-instead of a bind mount. The top-level `docker-compose.yml` intentionally
-keeps every `*_DIR` as a plain bind mount for simplicity (no Docker
-volume management for the deployer to think about), so this fix wasn't
-carried over there - it's noted here as a real risk to watch for in
-production. If `disk I/O error` ever shows up in real container logs,
-switching `CONFIG_DIR` to a named volume is a one-line fix.
+See the main [README.md](../../README.md#why-config_dir-is-a-named-docker-volume-sqlite-disk-io-error)
+for the full writeup (symptom, cause, and the backup command a named
+volume needs instead of a plain `cp`) - not duplicated here to avoid the
+two drifting out of sync.

@@ -147,6 +147,46 @@ points — set the actual host-side locations via the `volumes:` section of
 `WEB_UI_AUTH=none` is intended for a trusted LAN only — don't expose this
 tool directly to the internet.
 
+### Why CONFIG_DIR is a named Docker volume (SQLite "disk I/O error")
+
+Both the web process and the Huey worker open a WAL-mode connection to
+the same `app.db` at startup. Over a *bind-mounted* `CONFIG_DIR`, that
+reliably produced `sqlite3.OperationalError: disk I/O error` shortly
+after container start on Docker Desktop for Mac — the host↔VM
+filesystem-sharing layer doesn't always handle two WAL connections to the
+same bind-mounted file cleanly. The same thing can also happen if
+anything on the host (an editor, a `sqlite3` CLI session, a backup tool)
+opens `app.db` directly while the container is running. Once it happens,
+every request 500s and the process does **not** self-heal on its own.
+
+That's why `docker-compose.yml` uses a named Docker volume (`config_data`)
+for `CONFIG_DIR` instead of a bind mount like the other four paths — it
+isolates the database file from the host↔VM sharing layer entirely, and
+the issue hasn't reproduced since switching.
+
+**Backing it up.** A named volume isn't a plain host folder, so you can't
+just `cp -r` it like `./data/output`. Compose prefixes a project's named
+volumes with the project name — this repo's folder name by default, so
+`audiobook-converter_config_data` unless you've renamed the folder or set
+`COMPOSE_PROJECT_NAME`; run `docker volume ls` if you're not sure:
+
+```bash
+docker run --rm -v audiobook-converter_config_data:/data -v "$(pwd)":/backup alpine \
+  tar czf /backup/config-backup-$(date +%Y%m%d).tar.gz -C /data .
+```
+
+To restore into a fresh volume (e.g. after recreating the stack, or on a
+new host):
+
+```bash
+docker run --rm -v audiobook-converter_config_data:/data -v "$(pwd)":/backup alpine \
+  sh -c "cd /data && tar xzf /backup/config-backup-YYYYMMDD.tar.gz"
+```
+
+If you'd rather have a plain host folder you can `cp` directly (accepting
+the disk I/O error risk above), swap `docker-compose.yml`'s
+`config_data:/data/config` line back to a bind mount like the other four.
+
 ### Naming templates
 
 Placeholders: `{author}` `{title}` `{year}` `{series}` `{series_index}`

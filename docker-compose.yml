@@ -15,6 +15,13 @@
 # WORK_DIR, ARCHIVE_DIR, OUTPUT_DIR, CONFIG_DIR all default to matching
 # paths already, so leave both sides alone unless you have a reason to
 # rename the internal mount points too.
+#
+# CONFIG_DIR is the one exception: it's a named Docker volume
+# (config_data, defined at the bottom of this file), not a bind mount
+# like the other four. A bind-mounted CONFIG_DIR can produce a SQLite
+# "disk I/O error" that doesn't self-heal - see README.md's "Known issue"
+# note under Configuration for why, and for the backup command you'll
+# want instead of just `cp`-ing a folder.
 services:
   audiobook-converter:
     build: .
@@ -39,4 +46,7 @@ services:
       - ./data/work:/data/work       # scratch space during conversion
       - ./data/archive:/data/archive # original sources land here after processing (SOURCE_CLEANUP_MODE=archive)
       - ./data/output:/data/output   # finished, tagged audiobooks land here
-      - ./data/config:/data/config   # app database/settings - back this up, it's the only persistent state
+      - config_data:/data/config     # app database/settings - the only persistent state, back it up (see README.md)
+
+volumes:
+  config_data:
