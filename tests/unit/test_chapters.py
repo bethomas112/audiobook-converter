@@ -231,9 +231,11 @@ def test_priority_2_alignment_output_is_forced_monotonic(monkeypatch):
 def test_priority_2_unconfident_chapter_is_folded_not_kept(monkeypatch):
     """The refined design's core behaviour change: a chapter achew flags as
     a guess (is_guess True) is no longer written at its guessed position -
-    it's folded onto the next confidently-placed chapter's title instead
-    (here, with no mp3_multi file-boundary anchoring available to rescue
-    it either). No "Chapter 2" marker should exist in the output at all.
+    it's folded onto the PRECEDING confidently-placed chapter's title
+    instead (here, with no mp3_multi file-boundary anchoring available to
+    rescue it either), since that's the marker whose span actually grows to
+    contain the unresolved chapter's audio - not the one that follows. No
+    "Chapter 2" marker should exist in the output at all.
     """
     audnexus_chapters = [
         {"start_sec": 0.0, "end_sec": 50.0, "title": "Chapter 1"},
@@ -264,7 +266,7 @@ def test_priority_2_unconfident_chapter_is_folded_not_kept(monkeypatch):
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
     )
 
-    assert [c["title"] for c in result] == ["Chapter 1", "Chapter 2 — Chapter 3"]
+    assert [c["title"] for c in result] == ["Chapter 1 — Chapter 2", "Chapter 3"]
     assert [c["start_sec"] for c in result] == [0.0, 100.0]
     assert result[0]["end_sec"] == 100.0
     assert result[1]["end_sec"] == 150.0
@@ -307,6 +309,77 @@ def test_priority_2_trailing_unconfident_chapter_folds_onto_previous(monkeypatch
     assert [c["title"] for c in result] == ["Chapter 1", "Chapter 2 — Epilogue"]
     assert [c["start_sec"] for c in result] == [0.0, 48.0]
     assert result[-1]["end_sec"] == 150.0
+
+
+def test_priority_2_long_run_of_consecutive_unconfident_chapters_folds_onto_preceding(monkeypatch):
+    """End-to-end reproduction (through resolve_chapters(), not just the
+    _fold_unresolved_placements unit test) of the real-world failure that
+    shipped in commit 84e52b3 and got fixed here: a long run of MANY
+    consecutive unresolved chapters (15, mirroring the real book's report of
+    ~9-hour unlabeled blocks - the severity scales with run length, so a
+    1-2 chapter run wouldn't have caught this) between two achew-confident
+    chapters. Confirms every written marker's title accurately describes
+    the audio its span actually contains: no marker exists whose title
+    describes content positioned after that marker's own span ends.
+    """
+    n_chapters = 17
+    length = 500.0
+    audnexus_chapters = [
+        {"start_sec": i * length, "end_sec": (i + 1) * length, "title": f"Chapter {i + 1}"}
+        for i in range(n_chapters)
+    ]
+    total_duration = n_chapters * length
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: total_duration)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
+
+    # Only the first and last chapters are achew-confident - a 15-chapter
+    # unresolved run sits between them, exactly like the real book (no
+    # reliable silence anywhere for achew to skeleton-match beyond the
+    # forced chapter-0 anchor) and with no mp3_multi file-boundary source
+    # available to rescue any of them either.
+    class _FakeAligner:
+        def __init__(self, *a, **k):
+            pass
+
+        def align(self, ref_chapters, detected_cues, total_duration_ref, total_duration_actual, scanned_regions=None):
+            results = []
+            for i, c in enumerate(audnexus_chapters):
+                confident = i == 0 or i == n_chapters - 1
+                results.append({
+                    "title": c["title"],
+                    "timestamp": c["start_sec"],
+                    "confidence": 1.0 if i == 0 else (0.85 if confident else 0.25),
+                    "is_guess": not confident,
+                    "matched_silence": 0.0,
+                })
+            return results, {"scale": 1.0, "offset": 0.0, "expansion_needed": False}
+
+    monkeypatch.setattr(chapters_mod, "ChapterAligner", _FakeAligner)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
+    )
+
+    # Exactly 2 markers written - not 17, not 3+.
+    assert len(result) == 2
+
+    expected_compound_title = " — ".join(f"Chapter {i + 1}" for i in range(n_chapters - 1))
+    assert result[0]["title"] == expected_compound_title
+    assert result[0]["start_sec"] == 0.0  # chapter 1's own position, unchanged
+
+    assert result[1]["title"] == f"Chapter {n_chapters}"
+    assert result[1]["start_sec"] == (n_chapters - 1) * length  # chapter 17's own position, unchanged
+    assert result[1]["end_sec"] == total_duration
+
+    # The critical property this bug violated: every marker's span must
+    # actually contain everything its title claims to cover. The compound
+    # marker's span [start, next_start) must extend at least up to the
+    # position of the LAST chapter folded into its title (chapter 16's
+    # audnexus reference start) - i.e. the marker's own position, not some
+    # later chapter's position, anchors the start of everything it names.
+    last_folded_chapter_ref_start = audnexus_chapters[n_chapters - 2]["start_sec"]  # "Chapter 16"
+    assert result[0]["start_sec"] <= last_folded_chapter_ref_start < result[0]["end_sec"]
 
 
 def test_priority_3_source_boundaries_when_audnexus_empty_and_multi_file(monkeypatch, tmp_path):
@@ -569,15 +642,34 @@ def test_classify_placements_unresolved_when_neither_available():
     assert placements == [{"title": "Ch1", "position": None, "source": None}]
 
 
-def test_fold_unresolved_placements_folds_middle_run_onto_next_resolved():
+def test_fold_unresolved_placements_folds_middle_run_onto_preceding_resolved():
+    """The bug fix's core case: title and span must agree. A chapter's span
+    is always [its own position, the next resolved chapter's position), so
+    a run of unresolved chapters between two resolved ones must fold onto
+    the PRECEDING resolved chapter (whose span already extends forward to
+    swallow them) - never the one that follows, which would attach the
+    compound title to a marker positioned well past everything it claims to
+    cover. This is the exact shape of the real-world failure (commit
+    84e52b3): a long run of consecutive unresolved chapters (here 14, one
+    short of the worked example in the task write-up) between two resolved
+    ones must produce exactly 2 output markers, not 3+.
+    """
     placements = [
-        {"title": "A", "position": 0.0, "source": "achew"},
-        {"title": "B", "position": None, "source": None},
-        {"title": "C", "position": None, "source": None},
-        {"title": "D", "position": 300.0, "source": "achew"},
+        {"title": "Chapter 21", "position": 2100.0, "source": "achew"},
+        *[{"title": f"Chapter {n}", "position": None, "source": None} for n in range(22, 36)],
+        {"title": "Chapter 36", "position": 3600.0, "source": "achew"},
     ]
     resolved = _fold_unresolved_placements(placements)
-    assert [(r["title"], r["position"]) for r in resolved] == [("A", 0.0), ("B — C — D", 300.0)]
+
+    assert len(resolved) == 2
+
+    expected_compound_title = "Chapter 21 — " + " — ".join(f"Chapter {n}" for n in range(22, 36))
+    assert resolved[0]["title"] == expected_compound_title
+    assert resolved[0]["position"] == 2100.0  # chapter 21's OWN original position, unchanged
+
+    # Chapter 36 is completely untouched: its own title and its own position.
+    assert resolved[1]["title"] == "Chapter 36"
+    assert resolved[1]["position"] == 3600.0
 
 
 def test_fold_unresolved_placements_trailing_run_folds_onto_previous():
@@ -587,6 +679,36 @@ def test_fold_unresolved_placements_trailing_run_folds_onto_previous():
     ]
     resolved = _fold_unresolved_placements(placements)
     assert [(r["title"], r["position"]) for r in resolved] == [("A — B", 0.0)]
+
+
+def test_fold_unresolved_placements_leading_run_before_any_resolved_chapter():
+    """Edge case: unresolved chapters appearing before the very first
+    resolved chapter. Chapter 0 is documented as always achew-confident (so
+    this shouldn't occur in practice), but the pending_leading_titles
+    fallback must still work correctly rather than silently dropping
+    titles or crashing if that assumption is ever violated.
+    """
+    placements = [
+        {"title": "Intro A", "position": None, "source": None},
+        {"title": "Intro B", "position": None, "source": None},
+        {"title": "Chapter 1", "position": 10.0, "source": "achew"},
+    ]
+    resolved = _fold_unresolved_placements(placements)
+    assert [(r["title"], r["position"]) for r in resolved] == [("Intro A — Intro B — Chapter 1", 10.0)]
+
+
+def test_fold_unresolved_placements_degenerate_all_unresolved_does_not_crash_or_drop_titles():
+    """Should not occur - chapter 0 is always achew-confident - but the
+    defensive fallback must still produce a sane, non-crashing result if no
+    chapter in the whole book ever resolves."""
+    placements = [
+        {"title": "A", "position": None, "source": None},
+        {"title": "B", "position": None, "source": None},
+    ]
+    resolved = _fold_unresolved_placements(placements)
+    assert len(resolved) == 1
+    assert resolved[0]["title"] == "A — B"
+    assert resolved[0]["position"] == 0.0
 
 
 # ── Step 4: _cluster_shift_check / _verify_file_boundaries ─────────────────

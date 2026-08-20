@@ -160,10 +160,16 @@ def _align_audnexus_chapters(
     `is_guess` is False; otherwise use a verified file-boundary position
     (Step 4) if this is a multi-file MP3 source and boundary anchoring
     checked out for this book; otherwise fold this chapter's title onto
-    the next resolved (achew- or file-boundary-placed) chapter, or the
-    previous one if it's trailing with nothing after it. No chapter is
-    ever written from a raw, un-realigned audnexus timestamp or a
-    scale-interpolated guess - a chapter with no verified placement gets
+    the PRECEDING resolved (achew- or file-boundary-placed) chapter - never
+    the one that follows, since a chapter's span is always [its own
+    position, the next resolved chapter's position), so an unresolved
+    chapter's audio already falls inside whichever resolved span precedes
+    it, not the one after. E.g. chapters 22-35 all unresolved between
+    resolved chapters 21 and 36 folds to one marker titled "Chapter 21 —
+    Chapter 22 — ... — Chapter 35" at chapter 21's own position, spanning
+    [P21, P36); chapter 36 keeps its own untouched title and position. No
+    chapter is ever written from a raw, un-realigned audnexus timestamp or
+    a scale-interpolated guess - a chapter with no verified placement gets
     no marker of its own (see _classify_placements / _fold_unresolved_placements).
 
     Step 4 - file-boundary verification (_verify_file_boundaries), computed
@@ -290,30 +296,55 @@ def _classify_placements(
 def _fold_unresolved_placements(placements: list[dict]) -> list[dict]:
     """Step 3, resolution order 3: a chapter with neither an achew-confident
     nor a verified file-boundary placement gets no marker of its own - its
-    title folds onto whichever resolved chapter follows it (same
-    "{title} — {next title}" convention as _fold_short_chapters), or onto
-    the preceding resolved chapter if it's trailing with nothing after it.
-    Chapter 0 is always achew-confident (the aligner anchors it at 0.0
-    unconditionally), so there is always at least one resolved chapter to
-    fold onto.
+    title folds onto whichever resolved chapter PRECEDES it, never the one
+    that follows.
+
+    This direction is not a stylistic choice - it's the only one that keeps
+    a marker's title consistent with the audio its span actually covers. A
+    chapter's span is always [its own position, the next resolved chapter's
+    position). An unresolved chapter's real audio therefore already falls
+    inside the *preceding* resolved chapter's span (that span necessarily
+    extends forward to wherever the next resolved chapter starts, swallowing
+    everything in between) - so growing that preceding marker's title to
+    describe it is what keeps title and span in agreement. Folding onto the
+    chapter that *follows* instead (the bug this replaced - see git history
+    for the incident) would attach the compound title to a marker whose
+    position is the following chapter's own real start, which sits well
+    past the end of everything the compound title claims to cover.
+
+    Worked example: chapter 21 resolved at position P21, chapters 22-35 all
+    unresolved, chapter 36 resolved at position P36. Correct output is
+    exactly two markers: {title: "Chapter 21 — Chapter 22 — ... — Chapter
+    35", position: P21} (spanning [P21, P36)) and chapter 36's own untouched
+    {title: "Chapter 36", position: P36}. Title and position agree for both.
+
+    Same "{title} — {next title}" em-dash convention as _fold_short_chapters,
+    just applied backward. Chapter 0 is always achew-confident (the aligner
+    anchors it at 0.0 unconditionally), so in practice there is always a
+    resolved chapter already in hand by the time an unresolved one is seen;
+    the pending_leading_titles path below exists only as a defensive
+    fallback for the degenerate case where that assumption is somehow
+    violated.
     """
     resolved: list[dict] = []
-    pending_titles: list[str] = []
+    pending_leading_titles: list[str] = []  # only for unresolved chapters before ANY resolved chapter exists yet
     for p in placements:
         if p["position"] is None:
-            pending_titles.append(p["title"])
+            if resolved:
+                resolved[-1] = {**resolved[-1], "title": resolved[-1]["title"] + " — " + p["title"]}
+            else:
+                pending_leading_titles.append(p["title"])
             continue
-        title = " — ".join(pending_titles + [p["title"]]) if pending_titles else p["title"]
+        title = " — ".join(pending_leading_titles + [p["title"]]) if pending_leading_titles else p["title"]
         resolved.append({"title": title, "position": p["position"], "source": p["source"]})
-        pending_titles = []
+        pending_leading_titles = []
 
-    if pending_titles:
-        if resolved:
-            resolved[-1] = {**resolved[-1], "title": " — ".join([resolved[-1]["title"]] + pending_titles)}
-        else:
-            # Should not occur - chapter 0 is always achew-confident - but
-            # don't silently drop titles if it somehow does.
-            resolved.append({"title": " — ".join(pending_titles), "position": 0.0, "source": None})
+    if pending_leading_titles:
+        # Degenerate: no resolved chapter anywhere in the book. Shouldn't
+        # occur - chapter 0 is always achew-confident, per
+        # chapter_aligner.py - but don't silently drop titles if it somehow
+        # does.
+        resolved.append({"title": " — ".join(pending_leading_titles), "position": 0.0, "source": None})
 
     return resolved
 

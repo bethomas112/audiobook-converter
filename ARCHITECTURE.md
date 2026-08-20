@@ -238,15 +238,24 @@ aligner rather than changing it:
 5. **Fold rather than fabricate.** Per cleaned chapter, in order: use
    achew's placement if confident; otherwise use a verified file-boundary
    position if one exists for this chapter; otherwise fold this
-   chapter's title onto the next resolved chapter (achew- or
-   file-boundary-placed), or the previous one if it's trailing with
-   nothing after it - the same em-dash convention as step 1. No chapter
-   is ever written from a raw, un-realigned audnexus timestamp or a
-   scale-interpolated guess; a chapter with no verified placement gets no
-   marker of its own rather than a smoothly-drifting, fabricated one.
-   Chapter 0 is always achew-confident (the aligner anchors it at 0.0
-   unconditionally), so there's always at least one resolved chapter to
-   fold onto.
+   chapter's title onto the PRECEDING resolved chapter (achew- or
+   file-boundary-placed) - the same em-dash convention as step 1, but
+   applied backward rather than forward. The direction matters: a
+   marker's span is always [its own position, the next resolved marker's
+   position), so an unresolved chapter's real audio already falls inside
+   whichever resolved span precedes it, not the one that follows - folding
+   forward would attach the compound title to a marker positioned well
+   past the content it claims to describe. E.g. chapters 22-35 all
+   unresolved between resolved chapters 21 and 36 fold into one marker
+   titled "Chapter 21 — Chapter 22 — ... — Chapter 35" at chapter 21's own
+   position (spanning [P21, P36)); chapter 36 keeps its own untouched
+   title and position. No chapter is ever written from a raw,
+   un-realigned audnexus timestamp or a scale-interpolated guess; a
+   chapter with no verified placement gets no marker of its own rather
+   than a smoothly-drifting, fabricated one. Chapter 0 is always
+   achew-confident (the aligner anchors it at 0.0 unconditionally), so
+   there's always at least one resolved chapter already in hand to fold
+   onto.
 
 `app/pipeline/chapter_aligner.py` is a port of
 [achew](https://github.com/SirGibblets/achew)'s `ChapterAligner`
