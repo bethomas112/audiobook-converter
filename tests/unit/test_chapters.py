@@ -705,6 +705,25 @@ def test_fold_unresolved_placements_leading_run_before_any_resolved_chapter():
     assert [(r["title"], r["position"]) for r in resolved] == [("Intro A – Chapter 1", 10.0)]
 
 
+def test_fold_unresolved_placements_trailing_fold_after_leading_fold_keeps_leading_title():
+    """Doubly-degenerate combination of the previous two edge cases: a
+    leading unresolved run before the first resolved chapter, AND a
+    trailing unresolved run immediately after that same (now leading-
+    folded) resolved chapter. The anchor used for the trailing fold must be
+    this entry's full title as already collapsed by the leading fold, not
+    just the chapter's own bare title - otherwise the trailing fold's
+    recompute silently drops "Intro A" the moment it fires, since it would
+    have no way to know a leading fold ever happened.
+    """
+    placements = [
+        {"title": "Intro A", "position": None, "source": None},
+        {"title": "Chapter 1", "position": 10.0, "source": "achew"},
+        {"title": "Chapter 2", "position": None, "source": None},
+    ]
+    resolved = _fold_unresolved_placements(placements)
+    assert [(r["title"], r["position"]) for r in resolved] == [("Intro A – Chapter 1 – Chapter 2", 10.0)]
+
+
 def test_fold_unresolved_placements_degenerate_all_unresolved_does_not_crash_or_drop_titles():
     """Should not occur - chapter 0 is always achew-confident - but the
     defensive fallback must still produce a sane, non-crashing result if no

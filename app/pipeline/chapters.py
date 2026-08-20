@@ -358,7 +358,13 @@ def _fold_unresolved_placements(placements: list[dict]) -> list[dict]:
             continue
         title = f"{pending_leading_titles[0]} – {p['title']}" if pending_leading_titles else p["title"]
         resolved.append({"title": title, "position": p["position"], "source": p["source"]})
-        anchor_titles.append(p["title"])  # the chapter's own real title, regardless of any leading fold
+        # The anchor for any LATER trailing fold onto this same entry must be
+        # this entry's full just-computed title, not p["title"] alone - if a
+        # leading run already folded onto it (pending_leading_titles was
+        # non-empty), title is "{first pending title} - {p['title']}", and
+        # using p["title"] alone as the anchor would silently drop the
+        # leading title the moment a trailing fold overwrites it.
+        anchor_titles.append(title)
         pending_leading_titles = []
 
     if pending_leading_titles:
