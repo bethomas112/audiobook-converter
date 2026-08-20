@@ -3,6 +3,7 @@ on synthetic audio (tests/helpers.py). Requires ffmpeg on PATH - see
 README's "Development" section, which already assumes the same.
 """
 import re
+import time
 
 import pytest
 
@@ -57,6 +58,28 @@ def test_run_silencedetect_finds_known_gap(tmp_path):
     expected_start, expected_end = ground_truth[0]
     assert starts[0] == pytest.approx(expected_start, abs=0.3)
     assert ends[0] == pytest.approx(expected_end, abs=0.3)
+
+
+def test_run_silencedetect_whole_file_pass_is_fast_on_a_long_file(tmp_path):
+    """app/pipeline/chapters.py's _align_audnexus_chapters now runs a single
+    whole-file run_silencedetect pass on every audnexus-matched job (see its
+    docstring), where previously this filter only ran as the priority-4
+    silence-detection fallback. silencedetect is a decode-only audio filter
+    (no re-encode), so it's expected to run far faster than real-time - this
+    is a smoke check on a 10-minute file (not a full book-length one, to
+    keep the suite fast) with a generous bound, not a tight benchmark.
+
+    Manually measured against much longer synthetic files during development
+    (not part of the automated suite, since generating multi-gigabyte fixtures
+    on every run isn't worth it): ~0.6s wall-clock for a 30-minute file and
+    ~11s for a 10-hour one - i.e. negligible next to actual MP3->AAC
+    transcode time for a real book, or an M4B passthrough's plain file copy.
+    """
+    f = make_tone_mp3(tmp_path / "long.mp3", duration_sec=600.0, bitrate_kbps=64)
+    start = time.monotonic()
+    ffutil.run_silencedetect(f, threshold_db="-30dB", min_duration_sec=1.5)
+    elapsed = time.monotonic() - start
+    assert elapsed < 30.0, f"silencedetect took {elapsed:.1f}s on a 10-minute file - unexpectedly slow"
 
 
 def test_probe_raises_ffe_error_on_nonexistent_file(tmp_path):

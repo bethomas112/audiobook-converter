@@ -155,12 +155,90 @@ it, they still get the right chapter *count* but fall back to generic "1",
 tooling can leave in a source .m4b, which `ffprobe`'s chapter list can't
 tell apart from a fully-correct file. Otherwise (no usable embedded
 chapters), audnexus's official chapter data for the matched title is used
-if available; otherwise, for a multi-file MP3 source, each source file
-becomes one chapter; otherwise (a single undifferentiated stream with no
-better source) chapter breaks are inferred from silence via ffmpeg's
-`silencedetect` filter. audnexus timestamps are for Audible's own
-release and can run slightly past a given rip's actual duration, so
-they're clamped to the real output duration before being written.
+if available - **realigned against this rip's actual audio first**, see
+below; otherwise, for a multi-file MP3 source, each source file becomes
+one chapter; otherwise (a single undifferentiated stream with no better
+source) chapter breaks are inferred from silence via ffmpeg's
+`silencedetect` filter.
+
+**Priority-2 (audnexus) chapter realignment.** audnexus's chapter
+timestamps are anchored to Audible's own official release, which commonly
+has different front/back matter (a branded intro, "Audible Studios
+presents...", an outro) than a given local rip. Writing them verbatim
+used to land chapter navigation slightly after a chapter had actually
+begun - and, critically, the drift turned out not to be a single constant
+offset per book (an empirical investigation against 73 real,
+human-verified books found a median *internal* spread of ~16s within one
+book alone), so a single global correction can't fix it; each chapter
+needs to be individually re-anchored to the real audio.
+
+`app/pipeline/chapter_aligner.py` is a port of
+[achew](https://github.com/SirGibblets/achew)'s `ChapterAligner`
+(MIT licensed, © 2025 Sir Gibblets - see `/NOTICE.md` for the full license
+text and the itemized diff from upstream in that file's header comment).
+`app/pipeline/chapters.py`'s `_align_audnexus_chapters` drives it: a
+single whole-file `ffutil.run_silencedetect()` pass over the converted
+output (the same ffmpeg filter priority-4 uses, for a different purpose -
+turning silences into chapter *breaks* directly - here they become
+candidate *cues* to match chapters against) supplies the raw silences,
+each converted to a `(timestamp, gap)` cue the same way achew itself does
+(`DetectedCue.from_silences`: the cue sits 1/3s before the silence ends,
+`gap` is the silence's duration). Because this runs as a background batch
+job rather than an interactive tool, it can afford to scan the *whole*
+file up front - `scanned_regions` is always the entire duration - which
+sidesteps achew's own windowed-scan/expansion-retry mechanism entirely (a
+genuine simplification over achew's own usage).
+
+The matching algorithm itself (unchanged from achew) works in three
+tiers, matching the *relative spacing* between audnexus's chapters to the
+relative spacing between detected cues rather than absolute position -
+which is what makes it immune to a constant front-matter offset and to
+per-chapter jitter, instead of needing to know that offset in advance:
+
+1. **Skeleton** - a monotonic dynamic-programming match of chapters to
+   only the *strongest* cues (roughly one per chapter, by silence
+   duration), scored mostly on duration-shape (does the gap between two
+   matched cues match the gap between the corresponding audnexus
+   chapters?) with a weak absolute-position prior and a gap-strength
+   tie-breaker. The DP's time-base scale is the book/audnexus duration
+   ratio, re-estimated once via a robust (Theil-Sen) slope through the
+   skeleton's own matches if that disagrees with the ratio (which happens
+   when the duration difference is concentrated in front/trailing content
+   rather than spread evenly across chapters). These placements are the
+   **confident** tier and are never moved by the later tiers.
+2. **Fill** - the skeleton leaves gaps (a weak true boundary that never
+   made the "strongest cues" cut, or one sitting behind a regional
+   offset the skeleton's position prior penalized away). Each gap gets a
+   second, local duration-shape DP over the *full* cue set, bracketed by
+   the confident chapters on either side - anchoring on real bracket
+   times absorbs a regional offset a single global pass couldn't. These
+   placements are flagged as lower-confidence **guesses**.
+3. **Polish** - fills can land shape-correct but a couple of seconds off,
+   parked on an equally-consistent parallel decoy chain. Each guess
+   bracketed on both sides is re-snapped to the real cue nearest its
+   straddling-neighbour interpolation, within a small window.
+
+A chapter with no acceptable cue anywhere nearby is scale-interpolated
+between its placed neighbours and left as a guess rather than forced onto
+a wrong cue. Confidence is never used to gate *whether* a correction is
+applied - only what gets logged: `process_job` logs how many chapters
+landed confidently vs. as guesses, and the median/max shift applied, via
+`job.append_log()` (chapters resolve at ~92% of conversion progress,
+after the metadata-confirm review step, so there's no natural checkpoint
+for a manual confirmation gate without a larger re-architecture). On
+achew's own 73-book real-fixture regression set, this algorithm places
+~97% of matchable chapters within 0.1s of the human-verified boundary.
+
+`_clamp_to_duration()` - which used to be the *only* correction applied to
+audnexus's chapters (dropping any chapter starting past the actual
+output's duration, clamping the last one's end to fit) - is still applied
+after alignment, but now purely as a defensive backstop: the aligner's own
+placements are already bounded by real detected cues or by
+scale-interpolation clamped to the book, so a chapter starting past the
+file's end shouldn't occur any more. The clamp costs nothing to keep and
+guards against a bug (or a future change to the aligner) writing chapter
+metadata past the end of the file, which would otherwise corrupt the
+M4B's chapter atom - it's no longer the primary correction mechanism.
 
 **Metadata search** goes through Audible's own unauthenticated catalog
 API, not audnexus — audnexus turned out to have no free-text search of

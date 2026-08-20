@@ -52,7 +52,17 @@ how to run it.
    1. Embedded chapters already in an M4B input — left as-is (see the
       QuickTime-chapter-track repair note above for the one exception).
    2. Official chapter data for the matched title, if the input didn't
-      already have its own chapters.
+      already have its own chapters — **realigned to this rip's actual
+      audio** before being written, rather than trusted verbatim. The
+      official timestamps are for Audible's own release, which commonly
+      has different front/back matter than a given rip, so each chapter
+      is individually matched against a real pause in the converted audio
+      (a ported, credited algorithm from the
+      [achew](https://github.com/SirGibblets/achew) project - see
+      `NOTICE.md`) instead of just writing the official offset as-is.
+      This happens automatically; the outcome (how many chapters matched
+      confidently vs. were flagged as lower-confidence guesses) is
+      recorded in the job's log.
    3. Source-file boundaries, for a multi-file MP3 source with no
       official chapter data.
    4. Silence detection, as a last resort for an undifferentiated single
@@ -188,3 +198,11 @@ python -m huey.bin.huey_consumer app.queue.huey -w 1
 
 Both need `ffmpeg`/`ffprobe` on `PATH` to actually convert anything —
 inside the Docker image they're already there.
+
+Run the test suite with `pytest` from the repo root (`pip install -r
+requirements-dev.txt` first) — it also needs `ffmpeg`/`ffprobe` on `PATH`,
+since most tests run real conversions against small synthetic audio files
+rather than mocking ffmpeg.
+
+See `NOTICE.md` for third-party code included in this project (the
+chapter-realignment algorithm, ported from achew).

@@ -75,16 +75,134 @@ def test_priority_1_embedded_chapters_missing_quicktime_track_gets_repaired(monk
 
 
 def test_priority_2_audnexus_used_when_no_embedded_chapters(monkeypatch):
+    """A single-chapter audnexus result with no detected cues: the aligner
+    has nothing to snap to, so chapter 0 (always forced to 0.0) is the only
+    chapter and passes through unchanged. run_silencedetect is explicitly
+    mocked (rather than left to hit a nonexistent /out.m4b through real
+    ffmpeg) so this stays deterministic and independent of ffmpeg's error
+    behavior on a missing file.
+    """
     monkeypatch.setattr(
         chapters_mod.metadata, "get_chapters",
         lambda asin: [{"start_sec": 0, "end_sec": 100, "title": "Ch1"}],
     )
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
     result = resolve_chapters(
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
     )
-    assert result == [{"start_sec": 0, "end_sec": 100, "title": "Ch1"}]
+    assert result == [{"start_sec": 0.0, "end_sec": 100, "title": "Ch1"}]
+
+
+def test_priority_2_audnexus_chapters_realigned_to_detected_silence(monkeypatch):
+    """The actual bug fix: audnexus's chapter timestamps (0/100/200, evenly
+    spaced) must not be written verbatim when the real converted audio's
+    silences sit somewhere else (96/205) - each chapter is individually
+    snapped to the nearest real cue instead of trusting audnexus's absolute
+    offset, per app/pipeline/chapter_aligner.py (ported from achew).
+    """
+    audnexus_chapters = [
+        {"start_sec": 0.0, "end_sec": 100.0, "title": "Ch1"},
+        {"start_sec": 100.0, "end_sec": 200.0, "title": "Ch2"},
+        {"start_sec": 200.0, "end_sec": 300.0, "title": "Ch3"},
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 300.0)
+
+    # Real silences at 96s and 205s (a strong 3s gap each) - not at audnexus's
+    # 100/200. silencedetect's stderr format: silence_start comes before
+    # silence_end for the same gap.
+    stderr = (
+        "silence_start: 93.333333\nsilence_end: 96.333333 | silence_duration: 3.0\n"
+        "silence_start: 202.333333\nsilence_end: 205.333333 | silence_duration: 3.0\n"
+    )
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: stderr)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
+    )
+
+    assert [c["title"] for c in result] == ["Ch1", "Ch2", "Ch3"]
+    starts = [c["start_sec"] for c in result]
+    assert starts[0] == 0.0
+    assert starts[1] == pytest.approx(96.0, abs=0.01)
+    assert starts[2] == pytest.approx(205.0, abs=0.01)
+    # Contiguous: each chapter's end is the next one's (aligned) start.
+    assert result[0]["end_sec"] == pytest.approx(96.0, abs=0.01)
+    assert result[1]["end_sec"] == pytest.approx(205.0, abs=0.01)
+    assert result[2]["end_sec"] == 300.0
+
+
+def test_priority_2_alignment_outcome_is_logged(monkeypatch):
+    """Task requirement: the realignment outcome (confident vs. guessed,
+    median/max shift) must be logged via job.append_log so it's visible in
+    job history without digging into code - no user-facing confirmation
+    gate exists at this point in the pipeline (chapters resolve at ~92% of
+    conversion progress, well past the metadata-confirm step).
+    """
+    audnexus_chapters = [
+        {"start_sec": 0.0, "end_sec": 100.0, "title": "Ch1"},
+        {"start_sec": 100.0, "end_sec": 200.0, "title": "Ch2"},
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 200.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
+
+    logged = []
+    resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"),
+        has_embedded_chapters=False, asin="B123", log=logged.append,
+    )
+
+    assert len(logged) == 1
+    assert "Aligned 2 audnexus chapter" in logged[0]
+    assert "confidently matched" in logged[0]
+    assert "guesses" in logged[0]
+    assert "median shift" in logged[0] and "max shift" in logged[0]
+
+
+def test_priority_2_alignment_output_is_forced_monotonic(monkeypatch):
+    """Safety net (app/pipeline/chapters.py's _align_audnexus_chapters): even
+    if the aligner itself ever produced out-of-order timestamps for some
+    pathological input, downstream ffmetadata writing can't represent a
+    chapter starting before its predecessor - so this is clamped
+    defensively rather than trusted blind, per the investigation's guidance
+    on _clamp_to_duration's now-reduced (but not eliminated) safety-net role.
+    """
+    audnexus_chapters = [
+        {"start_sec": 0.0, "end_sec": 50.0, "title": "Ch1"},
+        {"start_sec": 50.0, "end_sec": 100.0, "title": "Ch2"},
+        {"start_sec": 100.0, "end_sec": 150.0, "title": "Ch3"},
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
+
+    class _FakeAligner:
+        def __init__(self, *a, **k):
+            pass
+
+        def align(self, ref_chapters, detected_cues, total_duration_ref, total_duration_actual, scanned_regions=None):
+            # Deliberately non-monotonic: chapter 2 lands BEFORE chapter 1.
+            return (
+                [
+                    {"title": "Ch1", "timestamp": 0.0, "confidence": 1.0, "is_guess": False, "matched_silence": 0.0},
+                    {"title": "Ch2", "timestamp": 80.0, "confidence": 0.85, "is_guess": False, "matched_silence": 2.0},
+                    {"title": "Ch3", "timestamp": 60.0, "confidence": 0.25, "is_guess": True, "matched_silence": 0.0},
+                ],
+                {"scale": 1.0, "offset": 0.0, "expansion_needed": False},
+            )
+
+    monkeypatch.setattr(chapters_mod, "ChapterAligner", _FakeAligner)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
+    )
+
+    starts = [c["start_sec"] for c in result]
+    assert starts == sorted(starts), f"chapter starts not monotonic: {starts}"
+    assert starts[2] == 80.0  # clamped up to chapter 2's start, not left at 60.0
 
 
 def test_priority_3_source_boundaries_when_audnexus_empty_and_multi_file(monkeypatch, tmp_path):

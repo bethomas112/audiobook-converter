@@ -255,7 +255,7 @@ def process_job(job_id: int):
 
         job.save_progress(92, stage="Resolving chapters")
         resolved_chapters = chapters.resolve_chapters(
-            job.source_type, audio_files, work_path, has_embedded, meta.get("asin")
+            job.source_type, audio_files, work_path, has_embedded, meta.get("asin"), log=job.append_log
         )
         if resolved_chapters is not None:
             ffutil.inject_chapters_ffmetadata(work_path, resolved_chapters)
