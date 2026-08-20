@@ -18,6 +18,7 @@ from mutagen.mp4 import MP4
 from tests.helpers import (
     has_quicktime_chapter_text_track,
     make_m4b,
+    make_m4b_with_silence_gap,
     make_tone_mp3,
     strip_quicktime_chapter_track,
 )
@@ -205,6 +206,14 @@ def test_m4b_passthrough_repairs_chapters_missing_quicktime_track(isolated_dirs,
 def test_m4b_without_embedded_chapters_uses_audnexus_chapters(isolated_dirs, monkeypatch, huey_immediate):
     """Chapter priority 2: an M4B with NO embedded chapters falls through to
     audnexus's official chapter data for the matched title.
+
+    The source has a real silence gap at ~8s so achew's aligner (see
+    app/pipeline/chapters.py's _align_audnexus_chapters) has something to
+    confidently anchor chapter 2 onto - the refined pipeline only ever
+    writes a marker for a chapter with a *verified* placement (achew-
+    confident or file-boundary-anchored), folding anything else onto a
+    neighbour rather than trusting an unverified guess (see
+    tests/unit/test_chapters.py for that folding behaviour in isolation).
     """
     from app.config import config
 
@@ -212,7 +221,7 @@ def test_m4b_without_embedded_chapters_uses_audnexus_chapters(isolated_dirs, mon
     monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{title}")
 
     source = isolated_dirs["inbox"] / "No Chapters Book.m4b"
-    make_m4b(source, duration_sec=3.0)  # no embedded chapters
+    make_m4b_with_silence_gap(source, segments=[("tone", 8.0), ("silence", 2.0), ("tone", 10.0)])
 
     meta = {
         "asin": "B123", "title": "No Chapters Book", "author": "", "narrator": "",
@@ -220,9 +229,13 @@ def test_m4b_without_embedded_chapters_uses_audnexus_chapters(isolated_dirs, mon
     }
     job = _run_job_to_completion(
         monkeypatch, source, meta,
+        # Both well over the refined chapter-alignment pipeline's 5s
+        # short-chapter-folding floor (app/pipeline/chapters.py's
+        # _MIN_CHAPTER_SEC) - this test is about priority-2 wiring, not
+        # that folding behaviour (see tests/unit/test_chapters.py for that).
         chapters_from_audnexus=[
-            {"start_sec": 0.0, "end_sec": 1.5, "title": "Official Ch1"},
-            {"start_sec": 1.5, "end_sec": 3.0, "title": "Official Ch2"},
+            {"start_sec": 0.0, "end_sec": 8.0, "title": "Official Ch1"},
+            {"start_sec": 8.0, "end_sec": 20.0, "title": "Official Ch2"},
         ],
     )
 

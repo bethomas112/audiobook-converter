@@ -83,6 +83,33 @@ def make_tone_silence_pattern_mp3(
     return path, silence_windows
 
 
+def make_m4b_with_silence_gap(
+    path: Path,
+    segments: list[tuple[str, float]],
+    bitrate_kbps: int = 96,
+):
+    """An M4B (no embedded chapters) built from alternating ("tone", dur)/
+    ("silence", dur) segments, so a test can assert achew-style realignment
+    (app/pipeline/chapter_aligner.py) confidently anchors onto a REAL
+    silence in a single-stream m4b_single source, not just an mp3 one (see
+    make_tone_silence_pattern_mp3, which this wraps and re-encodes to AAC/
+    M4B). Returns (path, [(silence_start_sec, silence_end_sec), ...]).
+    """
+    tmp_mp3 = path.with_suffix(".src.mp3")
+    _, silence_windows = make_tone_silence_pattern_mp3(tmp_mp3, segments, bitrate_kbps=bitrate_kbps)
+    _run(
+        [
+            "ffmpeg", "-y",
+            "-i", str(tmp_mp3),
+            "-c:a", "aac", "-b:a", f"{bitrate_kbps}k",
+            "-f", "mp4",
+            str(path),
+        ]
+    )
+    tmp_mp3.unlink()
+    return path, silence_windows
+
+
 def make_m4b(
     path: Path,
     duration_sec: float,
