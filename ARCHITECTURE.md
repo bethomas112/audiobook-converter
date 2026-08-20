@@ -172,22 +172,98 @@ human-verified books found a median *internal* spread of ~16s within one
 book alone), so a single global correction can't fix it; each chapter
 needs to be individually re-anchored to the real audio.
 
+A real-world test against a 28.6-hour, 52-file mp3_multi audiobook (69
+audnexus chapters) surfaced two further problems the algorithm below alone
+doesn't solve: some narrations have no long pauses *anywhere* (every
+detected silence in that book capped at 4.55s, stable across three
+different `silencedetect` thresholds - a genuine property of the
+recording, not a threshold-tuning problem), starving the aligner's
+confident tier of anything to anchor on; and a meaningful fraction of a
+book's "chapters" (23% in that book) are actually ~2s POV-character-name
+markers ("Meg", "Birdie" alternating) with no acoustic boundary of their
+own, which the aligner was trying and failing to place as if they were
+ordinary chapters. `_align_audnexus_chapters` (`app/pipeline/chapters.py`)
+is the refined pipeline that responds to both, wrapped around the
+aligner rather than changing it:
+
+1. **Short-chapter folding**, before alignment ever runs. Any audnexus
+   chapter whose own reported length (`end_sec - start_sec`, itself from
+   audnexus's `lengthMs`) is under 5s is dropped from the list the aligner
+   sees, and its title folded onto the chapter immediately following it -
+   `"{short title} — {next title}"` (or onto the *preceding* chapter if
+   it's the last one in the book, so a title is never silently dropped).
+   A chapter's own length is the signal, not its distance to a neighbour:
+   a real 8s "Dedication" chapter must survive; a 2s "Meg" marker must
+   not, regardless of how far away the surrounding chapters happen to
+   sit. This alone removes the name-marker chapters from the alignment
+   problem entirely, rather than asking the aligner to place something
+   that was never going to have its own silence.
+2. **Alignment**, unchanged - the achew `ChapterAligner` (below) runs
+   against this cleaned, shorter list.
+3. **A verified confidence gate**, rather than trusting every placement
+   the aligner returns. achew's `confidence` field turned out (confirmed
+   directly against achew's own `_build`/`_result` methods, the exact
+   commit this port is from) to be a fixed, small set of tier constants -
+   1.0 for the forced chapter-0 anchor, 0.85 for a confident skeleton
+   match, 0.35 for a fill, 0.25 for a fully-interpolated guess - not a
+   continuous score, with `is_guess` set to exactly `not confident` in
+   every case. So `is_guess is False` (already computed and returned by
+   the aligner) *is* the right gate, with no separate numeric threshold
+   needed.
+4. **File-boundary anchoring**, a second-line source of ground truth for
+   an otherwise-unconfident chapter, only for `mp3_multi` sources. Once
+   per book: skip entirely unless the source's file count sits within ~2
+   of the *cleaned* chapter count (comparing against the raw, marker-
+   inflated count would almost never match even a genuine
+   one-file-per-chapter rip). Try pairing chapters to files in both
+   directions - front-anchored (chapter 0 ↔ file 0, walking forward,
+   excess trimmed off the back) and back-anchored (the last chapter ↔ the
+   last file, walking backward, excess trimmed off the front) - since the
+   extra, unmatched files/chapters could plausibly sit at either end (an
+   unripped intro, or unsplit bonus/back-matter content). For each
+   direction, compute the shift (a paired file's real, `ffprobe`-measured
+   start boundary minus that chapter's own audnexus reference timestamp)
+   for every paired chapter, bucket the shifts to the nearest second, and
+   accept the direction only if ~80% of paired chapters land in the same
+   bucket - a large, tight majority is strong evidence these files really
+   do correspond 1:1 to these chapters, not a coincidental count match.
+   Whichever direction clusters tighter wins; a tie (or both equally
+   weak) defaults to back-anchored, matching front-matter mismatches
+   being the more commonly observed pattern in the investigation this
+   responds to. If neither direction clusters, file-boundary anchoring is
+   rejected for the whole book. A verified chapter's position is its own
+   real file boundary directly - the consensus shift's role is entirely
+   to decide whether to *trust* the pairing, not to further adjust an
+   already-accurate, individually-measured position.
+5. **Fold rather than fabricate.** Per cleaned chapter, in order: use
+   achew's placement if confident; otherwise use a verified file-boundary
+   position if one exists for this chapter; otherwise fold this
+   chapter's title onto the next resolved chapter (achew- or
+   file-boundary-placed), or the previous one if it's trailing with
+   nothing after it - the same em-dash convention as step 1. No chapter
+   is ever written from a raw, un-realigned audnexus timestamp or a
+   scale-interpolated guess; a chapter with no verified placement gets no
+   marker of its own rather than a smoothly-drifting, fabricated one.
+   Chapter 0 is always achew-confident (the aligner anchors it at 0.0
+   unconditionally), so there's always at least one resolved chapter to
+   fold onto.
+
 `app/pipeline/chapter_aligner.py` is a port of
 [achew](https://github.com/SirGibblets/achew)'s `ChapterAligner`
 (MIT licensed, © 2025 Sir Gibblets - see `/NOTICE.md` for the full license
-text and the itemized diff from upstream in that file's header comment).
-`app/pipeline/chapters.py`'s `_align_audnexus_chapters` drives it: a
-single whole-file `ffutil.run_silencedetect()` pass over the converted
-output (the same ffmpeg filter priority-4 uses, for a different purpose -
-turning silences into chapter *breaks* directly - here they become
-candidate *cues* to match chapters against) supplies the raw silences,
-each converted to a `(timestamp, gap)` cue the same way achew itself does
-(`DetectedCue.from_silences`: the cue sits 1/3s before the silence ends,
-`gap` is the silence's duration). Because this runs as a background batch
-job rather than an interactive tool, it can afford to scan the *whole*
-file up front - `scanned_regions` is always the entire duration - which
-sidesteps achew's own windowed-scan/expansion-retry mechanism entirely (a
-genuine simplification over achew's own usage).
+text and the itemized diff from upstream in that file's header comment) -
+step 2 above. `app/pipeline/chapters.py`'s `_align_audnexus_chapters`
+drives it: a single whole-file `ffutil.run_silencedetect()` pass over the
+converted output (the same ffmpeg filter priority-4 uses, for a different
+purpose - turning silences into chapter *breaks* directly - here they
+become candidate *cues* to match chapters against) supplies the raw
+silences, each converted to a `(timestamp, gap)` cue the same way achew
+itself does (`DetectedCue.from_silences`: the cue sits 1/3s before the
+silence ends, `gap` is the silence's duration). Because this runs as a
+background batch job rather than an interactive tool, it can afford to
+scan the *whole* file up front - `scanned_regions` is always the entire
+duration - which sidesteps achew's own windowed-scan/expansion-retry
+mechanism entirely (a genuine simplification over achew's own usage).
 
 The matching algorithm itself (unchanged from achew) works in three
 tiers, matching the *relative spacing* between audnexus's chapters to the
@@ -219,15 +295,25 @@ per-chapter jitter, instead of needing to know that offset in advance:
    straddling-neighbour interpolation, within a small window.
 
 A chapter with no acceptable cue anywhere nearby is scale-interpolated
-between its placed neighbours and left as a guess rather than forced onto
-a wrong cue. Confidence is never used to gate *whether* a correction is
-applied - only what gets logged: `process_job` logs how many chapters
-landed confidently vs. as guesses, and the median/max shift applied, via
-`job.append_log()` (chapters resolve at ~92% of conversion progress,
-after the metadata-confirm review step, so there's no natural checkpoint
-for a manual confirmation gate without a larger re-architecture). On
-achew's own 73-book real-fixture regression set, this algorithm places
-~97% of matchable chapters within 0.1s of the human-verified boundary.
+between its placed neighbours and flagged `is_guess` rather than forced
+onto a wrong cue - but as of the refined pipeline above, that
+interpolated position is never itself written: an unconfident chapter is
+either rescued by file-boundary anchoring or folded onto a neighbour (see
+step 5). On achew's own 73-book real-fixture regression set, the
+algorithm still places ~97% of matchable chapters within 0.1s of the
+human-verified boundary; this project's own ported copy of that fixture
+suite (`tests/unit/test_chapter_aligner.py`) measured 97.10% at
+calibration time.
+
+Every stage of this is logged via `job.append_log()` (chapters resolve at
+~92% of conversion progress, after the metadata-confirm review step, so
+there's no natural checkpoint for a manual confirmation gate without a
+larger re-architecture): how many chapters were folded for being short,
+how many achew placed confidently, how many file-boundary anchoring
+placed (and which direction, if used), how many were folded for lacking
+any verified placement, and the median/max shift among achew's own
+placements - enough that job history alone tells you which path every
+chapter took, without reading code.
 
 `_clamp_to_duration()` - which used to be the *only* correction applied to
 audnexus's chapters (dropping any chapter starting past the actual

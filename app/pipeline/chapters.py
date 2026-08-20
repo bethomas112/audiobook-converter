@@ -21,6 +21,16 @@
      isn't a single constant offset per book, so a global correction can't
      fix it - each chapter is instead individually matched to a real
      silence in the converted audio.
+
+     Some books have no reliable silence anywhere for the aligner to
+     anchor on (a real, measured property of some narrations, not a
+     threshold-tuning problem), and a substantial minority of a book's
+     "chapters" can actually be sub-5-second structural markers (POV-name
+     dividers, part breaks) with no acoustic boundary of their own. See
+     _align_audnexus_chapters for the full refined pipeline this drives:
+     short-chapter folding, an achew-confidence gate, file-boundary
+     anchoring as a second-line source of ground truth for multi-file MP3
+     rips, and folding (never fabricating) for anything left unresolved.
   3. Source-file boundaries, when the input was multiple discrete audio
      files and audnexus had no chapter data.
   4. Silence-detection, as the last-resort fallback for a single,
@@ -44,6 +54,32 @@ from app.pipeline.chapter_aligner import BasicChapter, ChapterAligner, DetectedC
 # duration diverges further from audnexus's own reported total, with a 15s
 # floor for when the two durations are close.
 _ALIGNER_WINDOW_FLOOR_SEC = 15.0
+
+# Step 1 of the refined design: an audnexus chapter with its OWN reported
+# length (end_sec - start_sec, itself derived from audnexus's lengthMs)
+# under this is treated as a structural marker (a POV-character-name
+# divider, a "Part 2" break) rather than a real, independently-placeable
+# chapter - it never reaches the aligner at all. 5s comfortably separates
+# real short front matter (a "Dedication" chapter, observed at ~8.4s in the
+# investigation this design responds to) from genuine ~2s name markers.
+_MIN_CHAPTER_SEC = 5.0
+
+# Step 4: cheap prefilter before ever probing per-file durations - only
+# attempt file-boundary anchoring when the source's file count is close to
+# the *cleaned* (post-short-fold) reference chapter count. Comparing
+# against the raw audnexus count (which still includes name-markers) would
+# almost never match even a genuine one-file-per-chapter rip.
+_FILE_COUNT_TOLERANCE = 2
+
+# Step 4's clustering check: a direction is verified only when this large a
+# majority of paired chapters agree on (round to the nearest second) the
+# same file-boundary-minus-reference shift. Matches the ~80% figure from
+# the investigation that motivated this design. Requiring an outright
+# majority this large structurally guarantees "a clear margin over the
+# next-most-common bucket" too: whatever's left (<=20%) has to be split
+# across the *other* buckets, each of which is then necessarily smaller
+# still.
+_FILE_BOUNDARY_MAJORITY_THRESHOLD = 0.8
 
 
 def resolve_chapters(
@@ -69,7 +105,9 @@ def resolve_chapters(
         audnexus_chapters = metadata.get_chapters(asin)
         if audnexus_chapters:
             duration_sec = ffutil.get_duration_sec(output_path)
-            aligned_chapters = _align_audnexus_chapters(audnexus_chapters, output_path, duration_sec, log)
+            aligned_chapters = _align_audnexus_chapters(
+                audnexus_chapters, output_path, duration_sec, source_type, source_audio_files, log
+            )
             return _clamp_to_duration(aligned_chapters, duration_sec)
 
     if source_type == "mp3_multi":
@@ -79,32 +117,68 @@ def resolve_chapters(
 
 
 def _align_audnexus_chapters(
-    chapters: list[dict], output_path: Path, duration_sec: float, log
+    chapters: list[dict],
+    output_path: Path,
+    duration_sec: float,
+    source_type: str,
+    source_audio_files: list[Path],
+    log,
 ) -> list[dict]:
-    """Realigns audnexus's chapter timestamps onto real silences detected in
-    this rip's actual (converted) audio, via a ported copy of achew's
-    ChapterAligner (see app/pipeline/chapter_aligner.py) - a monotonic
-    duration-shape match between the *spacing* of audnexus's chapters and
-    the spacing of detected silences, immune to a constant front-matter
-    offset and to per-chapter jitter, rather than trusting audnexus's
-    absolute timestamps.
+    """The refined audnexus-chapter pipeline: fold out structural markers,
+    realign what's left against real detected audio, then only ever write a
+    marker for a chapter with a genuinely *verified* placement - folding
+    (never fabricating a smooth guessed drift) for anything else.
 
-    A single whole-file ffmpeg silencedetect pass (ffutil.run_silencedetect,
-    the same filter the priority-4 fallback uses for a different purpose)
-    supplies the candidate cues. Unlike achew's own interactive use - which
-    windows detection to a padding around each expected timestamp, for
-    latency reasons - this runs as a background batch job and can afford to
-    scan the whole file, so scanned_regions is always the entire duration
-    and the aligner's expansion-retry path (for when a windowed scan turns
-    out too narrow) never has anything to fire for.
+    Step 1 - clean the reference list. Any audnexus chapter under
+    _MIN_CHAPTER_SEC (by its own reported length) is dropped before ever
+    reaching the aligner and its title folded onto a neighbour (see
+    _fold_short_chapters). Real books can have a substantial fraction of
+    "chapters" that are actually ~2s POV-name markers with no acoustic
+    boundary of their own; leaving them in front of achew wastes its
+    matching budget on chapters that can never be confidently placed.
 
-    Every chapter gets a placement (confident match, lower-confidence
-    "fill", or - if nothing nearby was ever found - a scale-interpolated
-    guess); confidence never gates whether a correction is applied, only
-    what gets logged. See ARCHITECTURE.md for the algorithm's tiers.
+    Step 2 - achew's own ChapterAligner (app/pipeline/chapter_aligner.py,
+    a ported copy) runs against the cleaned list. A single whole-file ffmpeg
+    silencedetect pass (ffutil.run_silencedetect, the same filter the
+    priority-4 fallback uses for a different purpose) supplies the
+    candidate cues; unlike achew's own interactive use - which windows
+    detection to a padding around each expected timestamp, for latency
+    reasons - this runs as a background batch job and can afford to scan
+    the whole file, so scanned_regions is always the entire duration and
+    the aligner's expansion-retry path never has anything to fire for.
+    achew's `confidence` field is a fixed, small set of tier constants, not
+    a continuous score (verified directly against achew's own `_build`/
+    `_result` methods at commit 5e8e249, the exact commit this port is
+    from: 1.0 for the forced chapter-0 anchor, 0.85 for a confident
+    "skeleton" match, 0.35 for a lower-confidence "fill", 0.25 for a
+    fully-interpolated guess - `is_guess` is set to exactly `not confident`
+    in every case) - so `is_guess is False` (already computed and returned
+    by the ported aligner) *is* the right confidence gate, with no separate
+    numeric threshold needed.
+
+    Step 3 - per cleaned chapter, in order: use achew's placement if
+    `is_guess` is False; otherwise use a verified file-boundary position
+    (Step 4) if this is a multi-file MP3 source and boundary anchoring
+    checked out for this book; otherwise fold this chapter's title onto
+    the next resolved (achew- or file-boundary-placed) chapter, or the
+    previous one if it's trailing with nothing after it. No chapter is
+    ever written from a raw, un-realigned audnexus timestamp or a
+    scale-interpolated guess - a chapter with no verified placement gets
+    no marker of its own (see _classify_placements / _fold_unresolved_placements).
+
+    Step 4 - file-boundary verification (_verify_file_boundaries), computed
+    once per book: only attempted for mp3_multi sources whose file count is
+    close to the cleaned chapter count, and only trusted once a large
+    majority of a candidate file<->chapter pairing agree on close to the
+    same shift between a file's real (ffprobe-measured) start boundary and
+    its paired chapter's audnexus reference timestamp - checked in both a
+    front-anchored and a back-anchored pairing direction, since the extra
+    unmatched files/chapters could plausibly sit at either end.
     """
-    ref_chapters = [BasicChapter(timestamp=c["start_sec"], title=c["title"]) for c in chapters]
-    ref_duration = chapters[-1]["end_sec"]
+    cleaned, short_folded = _fold_short_chapters(chapters, _MIN_CHAPTER_SEC)
+
+    ref_chapters = [BasicChapter(timestamp=c["start_sec"], title=c["title"]) for c in cleaned]
+    ref_duration = cleaned[-1]["end_sec"]
 
     stderr = ffutil.run_silencedetect(output_path, config.SILENCE_THRESHOLD_DB, config.SILENCE_MIN_DURATION_SEC)
     gaps = _parse_silence_gaps(stderr)
@@ -120,31 +194,276 @@ def _align_audnexus_chapters(
         scanned_regions=[(0.0, duration_sec)],
     )
 
+    file_boundaries = None
+    if source_type == "mp3_multi":
+        file_boundaries = _verify_file_boundaries(cleaned, source_audio_files)
+
+    placements = _classify_placements(cleaned, results, file_boundaries)
+    resolved = _fold_unresolved_placements(placements)
+
     # Safety net: the aligner is designed to keep matches monotonic (see
-    # chapter_aligner.py), but nothing downstream can write sane chapter
-    # metadata from a start time that regressed behind the previous
-    # chapter's, so this is enforced defensively rather than trusted blind.
+    # chapter_aligner.py), and file-boundary positions are cumulative sums
+    # so are monotonic by construction, but nothing downstream can write
+    # sane chapter metadata from a start time that regressed behind the
+    # previous chapter's, so this is enforced defensively rather than
+    # trusted blind.
     starts = []
     prev = 0.0
-    for r in results:
-        start = max(0.0, float(r["timestamp"]), prev)
+    for p in resolved:
+        start = max(0.0, float(p["position"]), prev)
         starts.append(start)
         prev = start
 
     aligned = []
-    for i, original in enumerate(chapters):
-        end = starts[i + 1] if i + 1 < len(starts) else original["end_sec"]
-        aligned.append({"start_sec": starts[i], "end_sec": end, "title": original["title"]})
+    for i, p in enumerate(resolved):
+        end = starts[i + 1] if i + 1 < len(starts) else ref_duration
+        aligned.append({"start_sec": starts[i], "end_sec": end, "title": p["title"]})
 
-    shifts = [abs(aligned[i]["start_sec"] - chapters[i]["start_sec"]) for i in range(len(chapters))]
-    confident = sum(1 for r in results if not r["is_guess"])
-    guesses = len(results) - confident
-    log(
-        f"Aligned {len(chapters)} audnexus chapter(s) to detected audio cues: "
-        f"{confident} confidently matched, {guesses} flagged as lower-confidence guesses "
-        f"(median shift {statistics.median(shifts):.1f}s, max shift {max(shifts):.1f}s)."
-    )
+    _log_alignment_summary(log, chapters, cleaned, short_folded, results, file_boundaries, placements, source_type)
     return aligned
+
+
+def _fold_short_chapters(chapters: list[dict], min_sec: float = _MIN_CHAPTER_SEC) -> tuple[list[dict], int]:
+    """Step 1: drop any audnexus chapter whose OWN reported length
+    (end_sec - start_sec, itself derived from audnexus's lengthMs) is under
+    min_sec, folding its title onto the chapter immediately following it in
+    the cleaned list - "{short title} — {next title}" (em dash, matching
+    this codebase's existing UI copy convention - see _chapters.html's
+    "Chapters — N, from Audible's official listing"). A short chapter with
+    nothing after it (it's the last chapter in the book) folds onto the
+    PRECEDING kept chapter instead ("{prev title} — {short title}"), so a
+    title is never silently dropped.
+
+    A chapter's own reported length is the signal used, not spacing to its
+    neighbours: front matter like an 8s "Dedication" is a real chapter and
+    must not be caught, while a ~2s "Meg"/"Birdie"-style POV-name marker
+    must be, regardless of how far away its neighbouring chapters happen to
+    sit.
+
+    Returns (cleaned_chapters, short_chapter_count).
+    """
+    cleaned: list[dict] = []
+    pending_titles: list[str] = []
+    for ch in chapters:
+        length = ch["end_sec"] - ch["start_sec"]
+        if length < min_sec:
+            pending_titles.append(ch["title"])
+            continue
+        title = " — ".join(pending_titles + [ch["title"]]) if pending_titles else ch["title"]
+        cleaned.append({**ch, "title": title})
+        pending_titles = []
+
+    if pending_titles:
+        if cleaned:
+            cleaned[-1] = {**cleaned[-1], "title": " — ".join([cleaned[-1]["title"]] + pending_titles)}
+        else:
+            # Degenerate: every chapter in the book was under min_sec. Not
+            # expected on any real book, but rather than silently produce
+            # zero chapters, keep the last original chapter's position with
+            # every title folded together.
+            cleaned.append({**chapters[-1], "title": " — ".join(pending_titles)})
+
+    short_count = len(chapters) - len(cleaned)
+    return cleaned, short_count
+
+
+def _classify_placements(
+    cleaned_chapters: list[dict], aligned_results: list[dict], file_boundaries: dict | None
+) -> list[dict]:
+    """Step 3, resolution order 1-2: classify each cleaned chapter as
+    achew-confident (is_guess is False), file-boundary-placed (only when
+    file_boundaries was verified for this book and covers this chapter
+    index), or unresolved (position=None, falls through to folding).
+    """
+    fb_positions = file_boundaries["positions"] if file_boundaries else {}
+    placements = []
+    for i, (ch, r) in enumerate(zip(cleaned_chapters, aligned_results)):
+        if not r["is_guess"]:
+            placements.append({"title": ch["title"], "position": float(r["timestamp"]), "source": "achew"})
+        elif i in fb_positions:
+            placements.append({"title": ch["title"], "position": float(fb_positions[i]), "source": "file_boundary"})
+        else:
+            placements.append({"title": ch["title"], "position": None, "source": None})
+    return placements
+
+
+def _fold_unresolved_placements(placements: list[dict]) -> list[dict]:
+    """Step 3, resolution order 3: a chapter with neither an achew-confident
+    nor a verified file-boundary placement gets no marker of its own - its
+    title folds onto whichever resolved chapter follows it (same
+    "{title} — {next title}" convention as _fold_short_chapters), or onto
+    the preceding resolved chapter if it's trailing with nothing after it.
+    Chapter 0 is always achew-confident (the aligner anchors it at 0.0
+    unconditionally), so there is always at least one resolved chapter to
+    fold onto.
+    """
+    resolved: list[dict] = []
+    pending_titles: list[str] = []
+    for p in placements:
+        if p["position"] is None:
+            pending_titles.append(p["title"])
+            continue
+        title = " — ".join(pending_titles + [p["title"]]) if pending_titles else p["title"]
+        resolved.append({"title": title, "position": p["position"], "source": p["source"]})
+        pending_titles = []
+
+    if pending_titles:
+        if resolved:
+            resolved[-1] = {**resolved[-1], "title": " — ".join([resolved[-1]["title"]] + pending_titles)}
+        else:
+            # Should not occur - chapter 0 is always achew-confident - but
+            # don't silently drop titles if it somehow does.
+            resolved.append({"title": " — ".join(pending_titles), "position": 0.0, "source": None})
+
+    return resolved
+
+
+def _cumulative_file_starts(source_audio_files: list[Path]) -> list[float]:
+    """The real (ffprobe-measured) start offset of each source file, in the
+    same concatenation order used elsewhere in this module - file i's start
+    is the summed duration of every file before it."""
+    starts = []
+    offset = 0.0
+    for f in source_audio_files:
+        starts.append(offset)
+        offset += ffutil.get_duration_sec(f)
+    return starts
+
+
+def _cluster_shift_check(pairs: list[tuple[int, float]], cleaned_chapters: list[dict]) -> tuple[float, float] | None:
+    """For a candidate chapter<->file-boundary pairing, bucket the shift
+    (file boundary time minus the chapter's audnexus reference start,
+    rounded to the nearest second) across every paired chapter and return
+    (majority_fraction, consensus_shift) for the most common bucket, or
+    None if there are no pairs. consensus_shift is the median of the raw
+    (unrounded) shifts inside the winning bucket, for sub-second precision.
+    """
+    if not pairs:
+        return None
+    shifts = [file_t - cleaned_chapters[ci]["start_sec"] for ci, file_t in pairs]
+    buckets: dict[int, list[float]] = {}
+    for s in shifts:
+        buckets.setdefault(round(s), []).append(s)
+    best_key = max(buckets, key=lambda k: len(buckets[k]))
+    majority_fraction = len(buckets[best_key]) / len(shifts)
+    consensus_shift = statistics.median(buckets[best_key])
+    return majority_fraction, consensus_shift
+
+
+def _verify_file_boundaries(cleaned_chapters: list[dict], source_audio_files: list[Path]) -> dict | None:
+    """Step 4: verify, once per book, whether this mp3_multi source's files
+    correspond 1:1 (or nearly so) with the cleaned reference chapters, so
+    each otherwise-unconfident chapter can be anchored to its own file's
+    real start boundary instead of being folded away.
+
+    Tries both a front-anchored pairing (chapter 0 <-> file 0, walking
+    forward, excess trimmed off the back) and a back-anchored pairing (the
+    last chapter <-> the last file, walking backward, excess trimmed off
+    the front) - the excess could plausibly sit at either end (an unripped
+    intro, or unsplit back-matter). Whichever direction's pairing has its
+    paired chapters agree more tightly on the same file-boundary-vs-
+    reference shift wins; an exact or near-tie prefers back-anchored
+    (trim-from-front), matching front-matter mismatches being the more
+    commonly observed pattern in the investigation this design responds to.
+
+    A verified chapter's position is its own real, ffprobe-measured file
+    boundary - not that boundary further adjusted by the consensus shift.
+    The consensus shift's role is entirely to *decide whether to trust* the
+    pairing (a large, tight majority is strong evidence these files really
+    do correspond 1:1 to these chapters); once trusted, each chapter's own
+    measured file boundary is strictly more accurate ground truth than
+    reconstructing a position from the reference timestamp plus a shared
+    shift would be.
+
+    Returns {"positions": {chapter_index: file_boundary_sec}, "direction":
+    "front"|"back", "majority_fraction": float, "shift": float} if
+    verified, else None (both directions failed the clustering check, or
+    the prefilter skipped verification entirely).
+    """
+    nc, nf = len(cleaned_chapters), len(source_audio_files)
+    if nc == 0 or nf == 0 or abs(nc - nf) > _FILE_COUNT_TOLERANCE:
+        return None
+
+    file_starts = _cumulative_file_starts(source_audio_files)
+    n_pairs = min(nc, nf)
+
+    front_pairs = [(i, file_starts[i]) for i in range(n_pairs)]
+    back_pairs = [(nc - n_pairs + k, file_starts[nf - n_pairs + k]) for k in range(n_pairs)]
+
+    front_check = _cluster_shift_check(front_pairs, cleaned_chapters)
+    back_check = _cluster_shift_check(back_pairs, cleaned_chapters)
+
+    candidates = []
+    if front_check and front_check[0] >= _FILE_BOUNDARY_MAJORITY_THRESHOLD:
+        candidates.append(("front", front_pairs, front_check[0], front_check[1]))
+    if back_check and back_check[0] >= _FILE_BOUNDARY_MAJORITY_THRESHOLD:
+        candidates.append(("back", back_pairs, back_check[0], back_check[1]))
+
+    if not candidates:
+        return None
+
+    if len(candidates) == 2:
+        front_c, back_c = candidates
+        # Tie-break (including an exact tie): prefer back-anchored unless
+        # front is STRICTLY tighter.
+        winner = front_c if front_c[2] > back_c[2] else back_c
+    else:
+        winner = candidates[0]
+
+    direction, pairs, majority_fraction, shift = winner
+    positions = {ci: file_t for ci, file_t in pairs}
+    return {"positions": positions, "direction": direction, "majority_fraction": majority_fraction, "shift": shift}
+
+
+def _log_alignment_summary(
+    log,
+    raw_chapters: list[dict],
+    cleaned: list[dict],
+    short_folded: int,
+    results: list[dict],
+    file_boundaries: dict | None,
+    placements: list[dict],
+    source_type: str,
+) -> None:
+    """Extends the original confident-vs-guess/shift summary so job history
+    alone tells you which of the four resolution paths every chapter took,
+    without reading code."""
+    achew_confident = sum(1 for p in placements if p["source"] == "achew")
+    fb_used = sum(1 for p in placements if p["source"] == "file_boundary")
+    folded_unresolved = sum(1 for p in placements if p["source"] is None)
+    achew_guesses = len(results) - achew_confident if results else 0
+
+    log(
+        f"Chapter prep: {len(raw_chapters)} audnexus chapter(s), {short_folded} folded into a "
+        f"neighbouring title for being under {_MIN_CHAPTER_SEC:.0f}s long (e.g. narrator-name "
+        f"markers), {len(cleaned)} sent to alignment."
+    )
+
+    if results:
+        shifts = [abs(float(r["timestamp"]) - cleaned[i]["start_sec"]) for i, r in enumerate(results)]
+        log(
+            f"Aligned {len(cleaned)} chapter(s) to detected audio cues: "
+            f"{achew_confident} confidently matched, {achew_guesses} flagged as lower-confidence guesses "
+            f"(median shift {statistics.median(shifts):.1f}s, max shift {max(shifts):.1f}s)."
+        )
+
+    if source_type == "mp3_multi":
+        if file_boundaries:
+            log(
+                f"File-boundary anchoring verified ({file_boundaries['direction']}-anchored, "
+                f"{file_boundaries['majority_fraction'] * 100:.0f}% of paired chapters agreed on a "
+                f"~{file_boundaries['shift']:.1f}s shift): {fb_used} otherwise-unconfident chapter(s) "
+                f"placed via real source-file boundaries."
+            )
+        else:
+            log("File-boundary anchoring not verified for this source (file/chapter count mismatch, "
+                "or no consistent shift across a candidate pairing) - not used.")
+
+    log(
+        f"Final chapters: {achew_confident} placed by achew, {fb_used} placed via verified file-boundary "
+        f"anchoring, {folded_unresolved} folded onto a neighbouring resolved chapter for lacking a verified "
+        f"placement of their own. {len(placements) - folded_unresolved} chapter(s) written."
+    )
 
 
 def _clamp_to_duration(chapters: list[dict], duration_sec: float) -> list[dict]:

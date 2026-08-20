@@ -59,10 +59,21 @@ how to run it.
       is individually matched against a real pause in the converted audio
       (a ported, credited algorithm from the
       [achew](https://github.com/SirGibblets/achew) project - see
-      `NOTICE.md`) instead of just writing the official offset as-is.
-      This happens automatically; the outcome (how many chapters matched
-      confidently vs. were flagged as lower-confidence guesses) is
-      recorded in the job's log.
+      `NOTICE.md`) instead of just writing the official offset as-is. A
+      few real-world wrinkles are handled before trusting that match: a
+      handful of very short "chapters" (a couple of seconds - typically a
+      narrator-name or part-break marker rather than a real chapter) are
+      folded into whichever real chapter follows them instead of getting
+      their own entry; for a multi-file source, a chapter the audio match
+      isn't confident about can instead be placed at its own source
+      file's real boundary, when that turns out to be a reliable
+      alternative for this particular book; and a chapter that ends up
+      with neither a confident audio match nor a reliable file boundary
+      is folded into a neighboring chapter rather than written at a
+      guessed position. This all happens automatically; the outcome (how
+      many chapters were folded, matched confidently, placed via file
+      boundaries, or folded for lacking any of the above) is recorded in
+      the job's log.
    3. Source-file boundaries, for a multi-file MP3 source with no
       official chapter data.
    4. Silence detection, as a last resort for an undifferentiated single

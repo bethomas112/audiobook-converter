@@ -21,7 +21,7 @@ from app.pipeline import metadata as metadata_mod
 from app.pipeline import ffutil
 from app import queue as queue_mod
 
-from tests.helpers import make_tone_silence_pattern_mp3
+from tests.helpers import make_tone_mp3, make_tone_silence_pattern_mp3
 
 
 def _run_job_to_completion(monkeypatch, source_path, selected_metadata, chapters_from_audnexus):
@@ -102,7 +102,8 @@ def test_audnexus_chapters_are_corrected_to_real_silence_boundaries(isolated_dir
     # The outcome must be logged (no user-facing confirmation gate at this point
     # in the pipeline - see app/pipeline/chapters.py's _align_audnexus_chapters).
     # job.log is one big timestamped string (see Job.append_log), not a list.
-    assert "Aligned 3 audnexus chapter" in job.log
+    assert "Chapter prep: 3 audnexus chapter(s)" in job.log
+    assert "Aligned 3 chapter" in job.log
 
 
 def test_audnexus_alignment_leaves_book_matching_reference_unchanged(isolated_dirs, monkeypatch, huey_immediate):
@@ -136,3 +137,111 @@ def test_audnexus_alignment_leaves_book_matching_reference_unchanged(isolated_di
     assert job.status == Job.STATUS_DONE, job.log
     written = ffutil.get_embedded_chapters(Path(job.destination_path))
     assert written[1]["start_sec"] == pytest.approx(true_ch2_start, abs=0.5)
+
+
+def test_no_silence_book_with_name_marker_chapters_folds_and_anchors_on_files(
+    isolated_dirs, monkeypatch, huey_immediate
+):
+    """Synthetic reproduction of the real 28.6-hour audiobook that motivated the
+    refined design (app/pipeline/chapters.py's _align_audnexus_chapters):
+
+    - A narration with NO reliably strong silence anywhere - modelled here even
+      more strictly than the real book (every real gap capped at 4.55s, stable
+      across three silencedetect thresholds) as literally zero silence at all,
+      guaranteeing achew's skeleton tier has nothing whatsoever to anchor on
+      beyond chapter 0 (which the aligner always forces to position 0.0
+      regardless of detected cues).
+    - 69 raw audnexus chapters, 16 of them (~23%, matching the real book's
+      proportion) ~2s POV-character-name markers ("Meg"/"Birdie" alternating,
+      plus one "Part 2") with no acoustic boundary of their own - modelled as
+      spoken over the opening of the real chapter that follows, sharing that
+      chapter's own source file (so the *file* boundary for a real chapter
+      isn't pushed later by a preceding marker - matching how these markers
+      actually appear in a real rip: the file that contains the real chapter
+      also opens with the marker).
+    - 52 real source files for 53 real (post-fold) chapters - one real chapter
+      short of a dedicated file, mirroring the real book's own file/chapter
+      mismatch - close enough for the file-boundary prefilter (tolerance 2).
+
+    Confirms the refined pipeline produces a SENSIBLE result on this
+    reproduction: every marker folded away (never its own chapter), achew
+    alone confidently placing only chapter 0 (there are no cues for it to
+    skeleton-match beyond that), the rest rescued by verified file-boundary
+    anchoring rather than being written as a fabricated, smoothly-drifting
+    scale-interpolated guess (the old behaviour this design replaces).
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
+    monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{title}")
+
+    # 52 source files, pure continuous tone each (no internal silence at all,
+    # and each individually well over the 5s short-chapter floor).
+    durations_cycle = [6.0, 7.0, 5.5, 8.0, 6.5]
+    file_durations = [durations_cycle[i % len(durations_cycle)] for i in range(52)]
+    source_dir = isolated_dirs["inbox"] / "No Silence Book"
+    source_dir.mkdir()
+    for i, dur in enumerate(file_durations):
+        make_tone_mp3(source_dir / f"part{i:03d}.mp3", duration_sec=dur)
+
+    # 53 "real" chapters - the first 52 lengths exactly match the 52 files
+    # (so a chapter's own file-boundary and its own audnexus reference start
+    # line up exactly), plus one trailing real chapter with no matching file.
+    real_lengths = file_durations + [6.0]
+
+    # 16 short (~2s) POV-name markers, spread through the 69-entry raw list -
+    # each one immediately BEFORE the real chapter it gets folded onto.
+    names = ["Meg", "Birdie"]
+    marker_titles = [names[k % 2] for k in range(16)]
+    marker_titles[8] = "Part 2"
+    marker_before_real_index = sorted({round(k * 53 / 16) for k in range(16)})
+    assert len(marker_before_real_index) == 16  # 53/16's spacing (~3.3) never collides when rounded
+    marker_set = set(marker_before_real_index)
+
+    raw_chapters = []
+    t = 0.0
+    marker_iter = iter(marker_titles)
+    for real_idx in range(53):
+        if real_idx in marker_set:
+            raw_chapters.append({"start_sec": t, "end_sec": t + 2.0, "title": next(marker_iter)})
+        length = real_lengths[real_idx]
+        raw_chapters.append({"start_sec": t, "end_sec": t + length, "title": f"Chapter {real_idx + 1}"})
+        t += length
+
+    assert len(raw_chapters) == 69
+    assert sum(1 for c in raw_chapters if (c["end_sec"] - c["start_sec"]) < 5.0) == 16
+
+    meta = {
+        "asin": "B0NOSILENCE", "title": "No Silence Book", "author": "", "narrator": "",
+        "series": "", "series_index": "", "year": "", "genre": "", "description": "", "cover_url": "",
+    }
+    job = _run_job_to_completion(monkeypatch, source_dir, meta, raw_chapters)
+
+    assert job.status == Job.STATUS_DONE, job.log
+    written = ffutil.get_embedded_chapters(Path(job.destination_path))
+
+    # No bare marker ever survives as its own chapter - every one got folded
+    # onto whichever real chapter followed it.
+    written_titles = [c["title"] for c in written]
+    assert "Meg" not in written_titles
+    assert "Birdie" not in written_titles
+    assert "Part 2" not in written_titles
+    assert any("Meg —" in t or "Birdie —" in t or "Part 2 —" in t for t in written_titles)
+
+    # Folding actually happened - fewer chapters written than the raw 69.
+    assert len(written) < 69
+
+    # No fabricated smooth drift: with zero detected cues, achew can
+    # confidently place only chapter 0 - everything else placed must come
+    # from verified file-boundary anchoring, per the job log (not a guess).
+    assert "Chapter prep: 69 audnexus chapter(s), 16 folded" in job.log
+    assert "1 confidently matched" in job.log
+    assert "File-boundary anchoring verified" in job.log
+
+    # Chapter start times land on real, irregular file-boundary durations -
+    # not a smooth linear interpolation across the book (a fabricated drift
+    # curve would instead look uniform/near-constant spacing).
+    starts = [c["start_sec"] for c in written]
+    assert starts == sorted(starts)
+    gaps = [round(b - a, 2) for a, b in zip(starts, starts[1:])]
+    assert len(set(gaps)) > 1, f"chapter spacing looks suspiciously uniform: {gaps}"
