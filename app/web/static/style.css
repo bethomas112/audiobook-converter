@@ -92,6 +92,19 @@ a{color:inherit;}
 /* ---------- Layout: rail + detail ---------- */
 .layout{display:grid; grid-template-columns:300px 1fr; gap:1.5rem; align-items:start;}
 .rail{position:sticky; top:1.75rem;}
+
+/* Named so document.startViewTransition() (see app.js) cross-fades each
+   swapped region on its own instead of the whole page - #rail is replaced
+   wholesale (outerHTML) and #nowConverting is replaced wholesale
+   (replaceWith), so the name has to live on a stable ancestor/selector
+   that both the old and new element match; #detail's content changes via
+   innerHTML so the element itself is stable. */
+#detail{view-transition-name:detail-panel;}
+#rail{view-transition-name:rail;}
+#nowConverting{view-transition-name:now-converting;}
+@media (prefers-reduced-motion: reduce){
+  #detail, #rail, #nowConverting{view-transition-name:none;}
+}
 @media (max-width:760px){
   .layout{grid-template-columns:1fr;}
   .rail{position:static; order:2;}
