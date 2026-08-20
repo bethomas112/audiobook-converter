@@ -164,9 +164,11 @@ def _align_audnexus_chapters(
     the one that follows, since a chapter's span is always [its own
     position, the next resolved chapter's position), so an unresolved
     chapter's audio already falls inside whichever resolved span precedes
-    it, not the one after. E.g. chapters 22-35 all unresolved between
-    resolved chapters 21 and 36 folds to one marker titled "Chapter 21 —
-    Chapter 22 — ... — Chapter 35" at chapter 21's own position, spanning
+    it, not the one after. The folded title is collapsed to an en-dash
+    range rather than chaining every folded title together, so a long run
+    doesn't produce an unreadable wall of text: e.g. chapters 22-35 all
+    unresolved between resolved chapters 21 and 36 folds to one marker
+    titled "Chapter 21 – Chapter 35" at chapter 21's own position, spanning
     [P21, P36); chapter 36 keeps its own untouched title and position. No
     chapter is ever written from a raw, un-realigned audnexus timestamp or
     a scale-interpolated guess - a chapter with no verified placement gets
@@ -312,31 +314,57 @@ def _fold_unresolved_placements(placements: list[dict]) -> list[dict]:
     position is the following chapter's own real start, which sits well
     past the end of everything the compound title claims to cover.
 
+    The displayed title is collapsed to an en-dash RANGE - "{anchor's own
+    title} – {most recently folded title}" - rather than chaining every
+    folded title together. A run of many consecutive unresolved chapters is
+    common on books with little usable silence to anchor on, and chaining
+    every one of their titles onto the anchor produces an unreadably long
+    wall of text (the real-world failure this replaced - see git history).
+    The range is recomputed fresh from the anchor's own original title each
+    time another chapter folds in, not accumulated onto whatever the title
+    currently is, so each resolved chapter's own original title has to be
+    tracked separately from its current (possibly already-folded) display
+    title.
+
     Worked example: chapter 21 resolved at position P21, chapters 22-35 all
     unresolved, chapter 36 resolved at position P36. Correct output is
-    exactly two markers: {title: "Chapter 21 — Chapter 22 — ... — Chapter
-    35", position: P21} (spanning [P21, P36)) and chapter 36's own untouched
-    {title: "Chapter 36", position: P36}. Title and position agree for both.
+    exactly two markers: {title: "Chapter 21 – Chapter 35", position: P21}
+    (spanning [P21, P36)) and chapter 36's own untouched {title: "Chapter
+    36", position: P36}. Title and position agree for both. This applies
+    even for a single fold: chapter 38 with just one unresolved chapter
+    "Meg — Chapter 39" folding onto it renders as "Chapter 38 – Meg —
+    Chapter 39" - an en-dash range that happens to contain a title with its
+    own em-dash short-marker prefix (see _fold_short_chapters) is expected
+    and fine; the en dash used for this range-folding is deliberately
+    distinct from the em dash _fold_short_chapters uses for its own,
+    unrelated chaining, so the two kinds of join stay visually
+    distinguishable.
 
-    Same "{title} — {next title}" em-dash convention as _fold_short_chapters,
-    just applied backward. Chapter 0 is always achew-confident (the aligner
-    anchors it at 0.0 unconditionally), so in practice there is always a
-    resolved chapter already in hand by the time an unresolved one is seen;
-    the pending_leading_titles path below exists only as a defensive
-    fallback for the degenerate case where that assumption is somehow
-    violated.
+    Chapter 0 is always achew-confident (the aligner anchors it at 0.0
+    unconditionally), so in practice there is always a resolved chapter
+    already in hand by the time an unresolved one is seen; the
+    pending_leading_titles path below exists only as a defensive fallback
+    for the degenerate case where that assumption is somehow violated.
     """
     resolved: list[dict] = []
+    anchor_titles: list[str] = []  # resolved[i]'s own original, never-folded title
     pending_leading_titles: list[str] = []  # only for unresolved chapters before ANY resolved chapter exists yet
     for p in placements:
         if p["position"] is None:
             if resolved:
-                resolved[-1] = {**resolved[-1], "title": resolved[-1]["title"] + " — " + p["title"]}
+                resolved[-1] = {**resolved[-1], "title": f"{anchor_titles[-1]} – {p['title']}"}
             else:
                 pending_leading_titles.append(p["title"])
             continue
-        title = " — ".join(pending_leading_titles + [p["title"]]) if pending_leading_titles else p["title"]
+        title = f"{pending_leading_titles[0]} – {p['title']}" if pending_leading_titles else p["title"]
         resolved.append({"title": title, "position": p["position"], "source": p["source"]})
+        # The anchor for any LATER trailing fold onto this same entry must be
+        # this entry's full just-computed title, not p["title"] alone - if a
+        # leading run already folded onto it (pending_leading_titles was
+        # non-empty), title is "{first pending title} - {p['title']}", and
+        # using p["title"] alone as the anchor would silently drop the
+        # leading title the moment a trailing fold overwrites it.
+        anchor_titles.append(title)
         pending_leading_titles = []
 
     if pending_leading_titles:
@@ -344,7 +372,12 @@ def _fold_unresolved_placements(placements: list[dict]) -> list[dict]:
         # occur - chapter 0 is always achew-confident, per
         # chapter_aligner.py - but don't silently drop titles if it somehow
         # does.
-        resolved.append({"title": " — ".join(pending_leading_titles), "position": 0.0, "source": None})
+        title = (
+            f"{pending_leading_titles[0]} – {pending_leading_titles[-1]}"
+            if len(pending_leading_titles) > 1
+            else pending_leading_titles[0]
+        )
+        resolved.append({"title": title, "position": 0.0, "source": None})
 
     return resolved
 

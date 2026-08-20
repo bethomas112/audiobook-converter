@@ -239,23 +239,30 @@ aligner rather than changing it:
    achew's placement if confident; otherwise use a verified file-boundary
    position if one exists for this chapter; otherwise fold this
    chapter's title onto the PRECEDING resolved chapter (achew- or
-   file-boundary-placed) - the same em-dash convention as step 1, but
-   applied backward rather than forward. The direction matters: a
-   marker's span is always [its own position, the next resolved marker's
-   position), so an unresolved chapter's real audio already falls inside
-   whichever resolved span precedes it, not the one that follows - folding
-   forward would attach the compound title to a marker positioned well
-   past the content it claims to describe. E.g. chapters 22-35 all
-   unresolved between resolved chapters 21 and 36 fold into one marker
-   titled "Chapter 21 — Chapter 22 — ... — Chapter 35" at chapter 21's own
-   position (spanning [P21, P36)); chapter 36 keeps its own untouched
-   title and position. No chapter is ever written from a raw,
-   un-realigned audnexus timestamp or a scale-interpolated guess; a
-   chapter with no verified placement gets no marker of its own rather
-   than a smoothly-drifting, fabricated one. Chapter 0 is always
-   achew-confident (the aligner anchors it at 0.0 unconditionally), so
-   there's always at least one resolved chapter already in hand to fold
-   onto.
+   file-boundary-placed) - backward rather than forward, unlike step 1.
+   The direction matters: a marker's span is always [its own position, the
+   next resolved marker's position), so an unresolved chapter's real audio
+   already falls inside whichever resolved span precedes it, not the one
+   that follows - folding forward would attach the compound title to a
+   marker positioned well past the content it claims to describe. Unlike
+   step 1's em-dash chaining, this fold collapses to an en-dash *range* -
+   "{anchor's own title} – {last folded title}" - recomputed fresh from
+   the anchor's own original title each time another chapter folds in,
+   rather than accumulated onto whatever the title currently is. A run of
+   many consecutive unresolved chapters is common on books with little
+   usable silence to anchor on, and chaining every one of their titles
+   onto the anchor (as step 1 does, and as this step itself used to do)
+   produces an unreadably long wall of text; the en dash also keeps this
+   kind of join visually distinct from step 1's em dash. E.g. chapters
+   22-35 all unresolved between resolved chapters 21 and 36 fold into one
+   marker titled "Chapter 21 – Chapter 35" at chapter 21's own position
+   (spanning [P21, P36)); chapter 36 keeps its own untouched title and
+   position. No chapter is ever written from a raw, un-realigned audnexus
+   timestamp or a scale-interpolated guess; a chapter with no verified
+   placement gets no marker of its own rather than a smoothly-drifting,
+   fabricated one. Chapter 0 is always achew-confident (the aligner
+   anchors it at 0.0 unconditionally), so there's always at least one
+   resolved chapter already in hand to fold onto.
 
 `app/pipeline/chapter_aligner.py` is a port of
 [achew](https://github.com/SirGibblets/achew)'s `ChapterAligner`

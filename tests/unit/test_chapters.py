@@ -266,7 +266,7 @@ def test_priority_2_unconfident_chapter_is_folded_not_kept(monkeypatch):
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
     )
 
-    assert [c["title"] for c in result] == ["Chapter 1 — Chapter 2", "Chapter 3"]
+    assert [c["title"] for c in result] == ["Chapter 1 – Chapter 2", "Chapter 3"]
     assert [c["start_sec"] for c in result] == [0.0, 100.0]
     assert result[0]["end_sec"] == 100.0
     assert result[1]["end_sec"] == 150.0
@@ -306,7 +306,7 @@ def test_priority_2_trailing_unconfident_chapter_folds_onto_previous(monkeypatch
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=False, asin="B123"
     )
 
-    assert [c["title"] for c in result] == ["Chapter 1", "Chapter 2 — Epilogue"]
+    assert [c["title"] for c in result] == ["Chapter 1", "Chapter 2 – Epilogue"]
     assert [c["start_sec"] for c in result] == [0.0, 48.0]
     assert result[-1]["end_sec"] == 150.0
 
@@ -364,7 +364,11 @@ def test_priority_2_long_run_of_consecutive_unconfident_chapters_folds_onto_prec
     # Exactly 2 markers written - not 17, not 3+.
     assert len(result) == 2
 
-    expected_compound_title = " — ".join(f"Chapter {i + 1}" for i in range(n_chapters - 1))
+    # The compound title collapses the whole 15-chapter unresolved run down
+    # to an en-dash range - anchor's own title through the LAST folded
+    # title - rather than chaining every folded title together (which is
+    # exactly the wall-of-text bug this replaced).
+    expected_compound_title = f"Chapter 1 – Chapter {n_chapters - 1}"
     assert result[0]["title"] == expected_compound_title
     assert result[0]["start_sec"] == 0.0  # chapter 1's own position, unchanged
 
@@ -663,7 +667,9 @@ def test_fold_unresolved_placements_folds_middle_run_onto_preceding_resolved():
 
     assert len(resolved) == 2
 
-    expected_compound_title = "Chapter 21 — " + " — ".join(f"Chapter {n}" for n in range(22, 36))
+    # Collapsed to an en-dash range - anchor's own title through the last
+    # folded title - not every folded title chained together.
+    expected_compound_title = "Chapter 21 – Chapter 35"
     assert resolved[0]["title"] == expected_compound_title
     assert resolved[0]["position"] == 2100.0  # chapter 21's OWN original position, unchanged
 
@@ -678,7 +684,7 @@ def test_fold_unresolved_placements_trailing_run_folds_onto_previous():
         {"title": "B", "position": None, "source": None},
     ]
     resolved = _fold_unresolved_placements(placements)
-    assert [(r["title"], r["position"]) for r in resolved] == [("A — B", 0.0)]
+    assert [(r["title"], r["position"]) for r in resolved] == [("A – B", 0.0)]
 
 
 def test_fold_unresolved_placements_leading_run_before_any_resolved_chapter():
@@ -694,7 +700,28 @@ def test_fold_unresolved_placements_leading_run_before_any_resolved_chapter():
         {"title": "Chapter 1", "position": 10.0, "source": "achew"},
     ]
     resolved = _fold_unresolved_placements(placements)
-    assert [(r["title"], r["position"]) for r in resolved] == [("Intro A — Intro B — Chapter 1", 10.0)]
+    # Same en-dash range collapse as the main (backward) fold direction:
+    # first pending title through the resolved chapter's own real title.
+    assert [(r["title"], r["position"]) for r in resolved] == [("Intro A – Chapter 1", 10.0)]
+
+
+def test_fold_unresolved_placements_trailing_fold_after_leading_fold_keeps_leading_title():
+    """Doubly-degenerate combination of the previous two edge cases: a
+    leading unresolved run before the first resolved chapter, AND a
+    trailing unresolved run immediately after that same (now leading-
+    folded) resolved chapter. The anchor used for the trailing fold must be
+    this entry's full title as already collapsed by the leading fold, not
+    just the chapter's own bare title - otherwise the trailing fold's
+    recompute silently drops "Intro A" the moment it fires, since it would
+    have no way to know a leading fold ever happened.
+    """
+    placements = [
+        {"title": "Intro A", "position": None, "source": None},
+        {"title": "Chapter 1", "position": 10.0, "source": "achew"},
+        {"title": "Chapter 2", "position": None, "source": None},
+    ]
+    resolved = _fold_unresolved_placements(placements)
+    assert [(r["title"], r["position"]) for r in resolved] == [("Intro A – Chapter 1 – Chapter 2", 10.0)]
 
 
 def test_fold_unresolved_placements_degenerate_all_unresolved_does_not_crash_or_drop_titles():
@@ -707,7 +734,7 @@ def test_fold_unresolved_placements_degenerate_all_unresolved_does_not_crash_or_
     ]
     resolved = _fold_unresolved_placements(placements)
     assert len(resolved) == 1
-    assert resolved[0]["title"] == "A — B"
+    assert resolved[0]["title"] == "A – B"
     assert resolved[0]["position"] == 0.0
 
 
