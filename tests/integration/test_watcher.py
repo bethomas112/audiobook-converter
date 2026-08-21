@@ -100,6 +100,32 @@ def test_source_with_existing_job_is_not_requeued(isolated_dirs, running_watcher
     assert Job.select().where(Job.source_path == str(f)).count() == 1
 
 
+def test_removed_source_path_reused_by_different_file_is_requeued(isolated_dirs, running_watcher):
+    """A dismissed (or done/failed) job's source path must not be
+    permanently blacklisted - if the user deletes that source and drops a
+    genuinely different file at the same path/name, it's a new drop-off and
+    should be queued, not silently swallowed by the same-path dedup that
+    exists to stop an untouched, still-present source from being
+    re-queued forever.
+    """
+    f = isolated_dirs["inbox"] / "book.mp3"
+    f.write_bytes(b"x" * 100)
+    assert _wait_until(lambda: Job.select().count() == 1, timeout=5.0)
+    old_job = Job.select().first()
+    old_job.dismissed = True
+    old_job.source_mtime = f.stat().st_mtime
+    old_job.save()
+
+    f.unlink()
+    time.sleep(1.1)  # ensure the new file's mtime differs from the old one
+    f.write_bytes(b"y" * 200)
+
+    assert _wait_until(lambda: Job.select().where(Job.dismissed == False).count() == 1, timeout=5.0)  # noqa: E712
+    new_job = Job.select().where(Job.dismissed == False).first()  # noqa: E712
+    assert new_job.id != old_job.id
+    assert new_job.source_path == str(f)
+
+
 def test_dotfile_drop_in_is_never_queued(isolated_dirs, running_watcher):
     """A macOS Finder .DS_Store (or any dotfile/dot-directory) dropped into
     the inbox must never become a Job - it can never be usefully processed

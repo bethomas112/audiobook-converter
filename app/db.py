@@ -97,6 +97,17 @@ class Job(BaseModel):
     # a brand new drop-off.
     dismissed = BooleanField(default=False)
 
+    # The top-level entry's mtime (os.stat().st_mtime) at the moment the
+    # watcher created this job, so the dedup check above can tell "the same
+    # untouched source is still sitting at this path" apart from "this path
+    # was reused - the user deleted the old source and dropped a genuinely
+    # different one with the same name." Null for jobs created any other
+    # way (e.g. directly via the API/tests) - see app/watcher.py's dedup
+    # check for why that's treated as "still blocks" rather than "unknown,
+    # so allow": a job whose original mtime was never recorded can't safely
+    # be assumed to be a stale entry.
+    source_mtime = FloatField(null=True)
+
     destination_path = CharField(null=True)
     error_message = TextField(null=True)
     log = TextField(default="")

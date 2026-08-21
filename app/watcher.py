@@ -58,11 +58,36 @@ class _ActivityHandler(FileSystemEventHandler):
                 self._activity[entry] = time.time()
 
 
-def _known_source_paths() -> set:
-    """All source paths that have ever had a Job created for them, so a
-    kept (non-cleaned-up) source in the inbox isn't re-queued forever.
+def _known_sources() -> dict:
+    """Every source path that's ever had a Job created for it, mapped to
+    that job's recorded source_mtime (None if it doesn't have one - see
+    Job.source_mtime). A kept (non-cleaned-up) source still at a known path
+    with an unchanged mtime is the "not re-queued forever" case this
+    guards; a path reused by a genuinely different file (different mtime)
+    is not.
     """
-    return {Path(j.source_path) for j in Job.select(Job.source_path)}
+    known = {}
+    for j in Job.select(Job.source_path, Job.source_mtime):
+        known[Path(j.source_path)] = j.source_mtime
+    return known
+
+
+def _safe_mtime(entry: Path):
+    try:
+        return entry.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _is_same_known_source(entry: Path, known_mtime) -> bool:
+    # None means either "this path was never seen before" (not in `known`
+    # at all - checked separately by the caller) or "a job exists for it
+    # but its original mtime was never recorded" - the latter can't safely
+    # be treated as "this is a new file," so it still blocks, same as
+    # before mtime tracking existed.
+    if known_mtime is None:
+        return True
+    return _safe_mtime(entry) == known_mtime
 
 
 def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threading.Event):
@@ -75,7 +100,7 @@ def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threa
     while not stop_event.is_set():
         stop_event.wait(1)
         now = time.time()
-        known = _known_source_paths()
+        known = _known_sources()
 
         with lock:
             snapshot = list(activity.items())
@@ -85,14 +110,14 @@ def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threa
                 with lock:
                     activity.pop(entry, None)
                 continue
-            if entry in known:
+            if entry in known and _is_same_known_source(entry, known[entry]):
                 with lock:
                     activity.pop(entry, None)
                 continue
             if now - last_seen < config.SETTLE_WINDOW_SEC:
                 continue
 
-            job = Job.create(source_path=str(entry))
+            job = Job.create(source_path=str(entry), source_mtime=_safe_mtime(entry))
             if config.AUTO_START_PROCESSING:
                 job.append_log("Detected in inbox; auto-starting (AUTO_START_PROCESSING=true).")
                 job.status = Job.STATUS_QUEUED
