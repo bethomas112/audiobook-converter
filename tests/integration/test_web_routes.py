@@ -13,12 +13,8 @@ from fastapi.testclient import TestClient
 from app.db import Job
 from app.web.routes import router
 
-
-@pytest.fixture
-def client(isolated_dirs):
-    app = FastAPI()
-    app.include_router(router)
-    return TestClient(app)
+# The `client` fixture lives in tests/integration/conftest.py (shared with
+# test_pending_routes.py).
 
 
 def test_static_favicon_is_served():
@@ -250,7 +246,10 @@ def test_start_endpoint_transitions_to_queued_and_runs_detection(client, monkeyp
 
     resp = client.post(f"/jobs/{job.id}/start")
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    # job_id is additive (see the pending: branch of this route, which
+    # needs it to report the newly-created Job's real id) - app.js only
+    # checks res.ok, so this stays backward compatible.
+    assert resp.json() == {"ok": True, "job_id": job.id}
 
     job = Job.get_by_id(job.id)
     assert job.status == Job.STATUS_AWAITING_METADATA_CONFIRM
@@ -477,3 +476,57 @@ class TestBasicAuth:
     def test_api_status_also_requires_auth(self, client):
         resp = client.get("/api/status")
         assert resp.status_code == 401
+
+
+def test_pending_entry_appears_in_rail_and_index(client, isolated_dirs, monkeypatch):
+    from app.config import config
+    from app.watcher import start_watcher
+
+    monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.1)
+    observer, stop_event = start_watcher()
+    try:
+        (isolated_dirs["inbox"] / "Some Book.mp3").write_bytes(b"x" * 100)
+        import time
+
+        deadline = time.time() + 5.0
+        found = False
+        while time.time() < deadline:
+            resp = client.get("/")
+            if "Some Book.mp3" in resp.text:
+                found = True
+                break
+            time.sleep(0.1)
+        assert found, "pending entry never appeared on the index page"
+    finally:
+        stop_event.set()
+        observer.stop()
+        observer.join(timeout=5)
+
+
+def test_panel_fragment_for_pending_entry(client, isolated_dirs, monkeypatch):
+    from app.config import config
+    from app.watcher import claim_pending, list_pending, start_watcher
+
+    monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.1)
+    observer, stop_event = start_watcher()
+    try:
+        (isolated_dirs["inbox"] / "Some Book.mp3").write_bytes(b"x" * 100)
+        import time
+
+        deadline = time.time() + 5.0
+        pending = []
+        while time.time() < deadline:
+            pending = list_pending()
+            if len(pending) == 1:
+                break
+            time.sleep(0.1)
+        assert len(pending) == 1
+        resp = client.get(f"/fragments/panel/{pending[0].id}")
+        assert resp.status_code == 200
+        assert "Some Book.mp3" in resp.text
+        # Viewing the panel must not consume the entry.
+        assert claim_pending("Some Book.mp3") is not None
+    finally:
+        stop_event.set()
+        observer.stop()
+        observer.join(timeout=5)
