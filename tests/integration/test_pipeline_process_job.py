@@ -17,6 +17,7 @@ from mutagen.mp4 import MP4
 
 from tests.helpers import (
     has_quicktime_chapter_text_track,
+    make_header_garbage_mp3,
     make_m4b,
     make_m4b_with_silence_gap,
     make_tone_mp3,
@@ -380,3 +381,34 @@ def test_failed_detection_marks_job_failed_not_crash(isolated_dirs, monkeypatch,
 
     assert job.status == Job.STATUS_FAILED
     assert job.error_message
+
+
+def test_totally_invalid_mp3_fails_fast_during_detection_with_clear_message(
+    isolated_dirs, monkeypatch, huey_immediate
+):
+    """start_job()'s existing header-only source-duration probe (right
+    after detect(), before the metadata search API call) must catch a
+    totally-invalid file with a message that clearly names corruption as
+    the cause, not a bare ffprobe stderr dump. Must also never reach the
+    metadata search call for a source that's already known to be unusable.
+    """
+    from app.pipeline import metadata as metadata_mod
+
+    search_calls = []
+
+    def _tracked_search(*args, **kwargs):
+        search_calls.append(1)
+        return []
+
+    monkeypatch.setattr(metadata_mod, "search", _tracked_search)
+
+    source = isolated_dirs["inbox"] / "Garbage Book.mp3"
+    make_header_garbage_mp3(source)
+
+    job = Job.create(source_path=str(source))
+    queue_mod.start_job(job.id)
+    job = Job.get_by_id(job.id)
+
+    assert job.status == Job.STATUS_FAILED, job.log
+    assert "corrupt" in job.error_message.lower()
+    assert not search_calls  # never got as far as the metadata API call

@@ -63,7 +63,12 @@ def start_job(job_id: int):
         # candidate's official runtime_minutes - letting a mismatched
         # edition (e.g. an abridged match against an unabridged source) be
         # spotted before confirming instead of only after conversion.
-        job.source_duration_sec = sum(ffutil.get_duration_sec(f) for f in result.audio_files)
+        try:
+            job.source_duration_sec = sum(ffutil.get_duration_sec(f) for f in result.audio_files)
+        except ffutil.FFError as e:
+            raise ffutil.FFError(
+                f"A source file appears to be corrupt or unreadable and can't be processed ({e})."
+            ) from e
         job.append_log(f"Total source duration: {job.source_duration_sec / 60:.1f} min.")
 
         candidates = metadata.search(result.title_guess, result.author_guess)
