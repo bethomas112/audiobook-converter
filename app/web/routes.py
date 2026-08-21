@@ -20,6 +20,7 @@ every route that renders a rail or panel builds its response from it, so
 the "Needs Input / Converting / Done" grouping only has to be defined once.
 """
 import secrets
+import urllib.parse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -29,6 +30,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import config
 from app.db import Job
 from app.pipeline import metadata
+from app.pipeline import archive
 from app.queue import (
     cancel_job,
     confirm_metadata,
@@ -36,7 +38,9 @@ from app.queue import (
     reorder_queue,
     requeue_job,
     start_job,
+    start_new_job,
 )
+from app.watcher import claim_pending, list_pending
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/web/templates")
@@ -144,12 +148,39 @@ def require_auth(credentials: HTTPBasicCredentials = Depends(_basic_auth)):
         raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
 
 
+def _resolve_board_item(job_id: str):
+    """Looks up either a real Job (plain integer id) or a not-yet-claimed
+    PendingEntry ("pending:<url-quoted name>" id) for read-only display -
+    does not claim/consume a pending entry. Returns None if neither
+    resolves.
+
+    FastAPI/Starlette auto-decodes path params, so the incoming job_id
+    here is already unquoted (e.g. a literal space, not "%20") while
+    PendingEntry.id is always stored pre-quoted (see app/watcher.py's
+    _pending_id() - the design doc requires using the encoded form
+    consistently everywhere an id is compared or embedded). Re-quoting
+    job_id's name back to the canonical encoded form before comparing is
+    what makes this match rather than silently 404 for any name
+    containing a space or other reserved character.
+    """
+    if job_id.startswith("pending:"):
+        name = urllib.parse.unquote(job_id[len("pending:"):])
+        canonical_id = "pending:" + urllib.parse.quote(name, safe="")
+        return next((entry for entry in list_pending() if entry.id == canonical_id), None)
+    try:
+        numeric_id = int(job_id)
+    except ValueError:
+        return None
+    return Job.get_or_none(Job.id == numeric_id)
+
+
 def _board_context(request: Request) -> dict:
-    needs_input = list(
+    needs_input_jobs = list(
         Job.select()
         .where(Job.dismissed == False, Job.status.in_(_NEEDS_INPUT_STATUSES))  # noqa: E712
         .order_by(Job.created_at)
     )
+    needs_input = sorted(needs_input_jobs + list_pending(), key=lambda j: j.created_at)
     converting = list(
         Job.select()
         .where(Job.dismissed == False, Job.status.in_(_CONVERTING_STATUSES))  # noqa: E712
@@ -197,8 +228,8 @@ def fragment_now_converting(request: Request, _=Depends(require_auth)):
 
 
 @router.get("/fragments/panel/{job_id}")
-def fragment_panel(request: Request, job_id: int, _=Depends(require_auth)):
-    job = Job.get_or_none(Job.id == job_id)
+def fragment_panel(request: Request, job_id: str, _=Depends(require_auth)):
+    job = _resolve_board_item(job_id)
     if job is None:
         raise HTTPException(status_code=404)
     ctx = _board_context(request)
@@ -209,28 +240,48 @@ def fragment_panel(request: Request, job_id: int, _=Depends(require_auth)):
 @router.get("/api/status")
 def api_status(_=Depends(require_auth)):
     jobs = Job.select().where(Job.dismissed == False)  # noqa: E712
-    return JSONResponse(
-        [
-            {
-                "id": j.id,
-                "status": j.status,
-                "progress_pct": j.progress_pct,
-                "progress_stage": j.progress_stage,
-            }
-            for j in jobs
-        ]
-    )
+    rows = [
+        {
+            "id": j.id,
+            "status": j.status,
+            "progress_pct": j.progress_pct,
+            "progress_stage": j.progress_stage,
+        }
+        for j in jobs
+    ]
+    rows += [
+        {
+            "id": entry.id,
+            "status": entry.status,
+            "progress_pct": entry.progress_pct,
+            "progress_stage": entry.progress_stage,
+        }
+        for entry in list_pending()
+    ]
+    return JSONResponse(rows)
 
 
 @router.post("/jobs/{job_id}/start")
-def start(job_id: int, _=Depends(require_auth)):
-    job = Job.get_or_none(Job.id == job_id)
+def start(job_id: str, _=Depends(require_auth)):
+    if job_id.startswith("pending:"):
+        name = urllib.parse.unquote(job_id[len("pending:"):])
+        entry = claim_pending(name)
+        if entry is None:
+            raise HTTPException(status_code=404)
+        job = start_new_job(entry)
+        return JSONResponse({"ok": True, "job_id": job.id})
+
+    try:
+        numeric_id = int(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404)
+    job = Job.get_or_none(Job.id == numeric_id)
     if job is None:
         raise HTTPException(status_code=404)
     job.status = Job.STATUS_QUEUED
     job.touch_and_save()
-    start_job(job_id)
-    return JSONResponse({"ok": True})
+    start_job(numeric_id)
+    return JSONResponse({"ok": True, "job_id": job.id})
 
 
 @router.post("/jobs/{job_id}/confirm")
@@ -317,10 +368,22 @@ def requeue(job_id: int, _=Depends(require_auth)):
 
 
 @router.post("/jobs/{job_id}/remove")
-def remove(job_id: int, _=Depends(require_auth)):
-    if Job.get_or_none(Job.id == job_id) is None:
+def remove(job_id: str, _=Depends(require_auth)):
+    if job_id.startswith("pending:"):
+        name = urllib.parse.unquote(job_id[len("pending:"):])
+        entry = claim_pending(name)
+        if entry is None:
+            raise HTTPException(status_code=404)
+        archive.handle_source_cleanup(entry, log=print)
+        return JSONResponse({"ok": True})
+
+    try:
+        numeric_id = int(job_id)
+    except ValueError:
         raise HTTPException(status_code=404)
-    remove_job(job_id)
+    if Job.get_or_none(Job.id == numeric_id) is None:
+        raise HTTPException(status_code=404)
+    remove_job(numeric_id)
     return JSONResponse({"ok": True})
 
 
