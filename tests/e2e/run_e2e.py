@@ -110,7 +110,15 @@ def main():
         # structured data out of it.
         rows = json.loads(body)
         for row in rows:
-            if isinstance(row["id"], str) and row["id"].startswith("pending:") and source_book.name in row["id"]:
+            row_id = row["id"]
+            if not (isinstance(row_id, str) and row_id.startswith("pending:")):
+                continue
+            # row_id's name is percent-encoded (see app/watcher.py's
+            # _pending_id()) - source_book.name isn't, so a name containing
+            # a space or other reserved character (virtually every real
+            # audiobook filename) never matched as a plain substring.
+            # Decode before comparing instead of matching raw.
+            if urllib.parse.unquote(row_id[len("pending:") :]) == source_book.name:
                 return row
         return None
 
