@@ -79,6 +79,45 @@ def test_remove_on_pending_entry_archives_source_and_creates_no_job(client, isol
     assert list_pending() == []
 
 
+def test_start_on_vanished_pending_entry_404s(client, isolated_dirs, monkeypatch):
+    """The spec's Testing section calls for a 404 on 'an already-claimed
+    or vanished name' - already-claimed is covered by
+    test_start_on_already_claimed_pending_entry_404s above; this covers
+    the other half: the file was removed via the filesystem (not through
+    the API) after settling but before anyone clicked "Find this book".
+    """
+    monkeypatch.setattr("app.web.routes.start_job", lambda job_id: None)
+    pending_id = _settle_and_get_pending_id(isolated_dirs, "book.mp3", monkeypatch)
+    (isolated_dirs["inbox"] / "book.mp3").unlink()
+
+    resp = client.post(f"/jobs/{pending_id}/start")
+
+    assert resp.status_code == 404
+    assert Job.select().count() == 0
+
+
+def test_remove_on_already_claimed_pending_entry_404s(client, isolated_dirs, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "archive")
+    pending_id = _settle_and_get_pending_id(isolated_dirs, "book.mp3", monkeypatch)
+
+    first = client.post(f"/jobs/{pending_id}/remove")
+    assert first.status_code == 200
+
+    second = client.post(f"/jobs/{pending_id}/remove")
+    assert second.status_code == 404
+
+
+def test_remove_on_vanished_pending_entry_404s(client, isolated_dirs, monkeypatch):
+    pending_id = _settle_and_get_pending_id(isolated_dirs, "book.mp3", monkeypatch)
+    (isolated_dirs["inbox"] / "book.mp3").unlink()
+
+    resp = client.post(f"/jobs/{pending_id}/remove")
+
+    assert resp.status_code == 404
+
+
 def test_pending_entry_name_with_space_round_trips(client, isolated_dirs, monkeypatch):
     """Regression test for the URL-encoding gotcha found during design:
     app.js concatenates the id into the request URL with no encoding, so
