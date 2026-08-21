@@ -240,17 +240,25 @@ def fragment_panel(request: Request, job_id: str, _=Depends(require_auth)):
 @router.get("/api/status")
 def api_status(_=Depends(require_auth)):
     jobs = Job.select().where(Job.dismissed == False)  # noqa: E712
-    return JSONResponse(
-        [
-            {
-                "id": j.id,
-                "status": j.status,
-                "progress_pct": j.progress_pct,
-                "progress_stage": j.progress_stage,
-            }
-            for j in jobs
-        ]
-    )
+    rows = [
+        {
+            "id": j.id,
+            "status": j.status,
+            "progress_pct": j.progress_pct,
+            "progress_stage": j.progress_stage,
+        }
+        for j in jobs
+    ]
+    rows += [
+        {
+            "id": entry.id,
+            "status": entry.status,
+            "progress_pct": entry.progress_pct,
+            "progress_stage": entry.progress_stage,
+        }
+        for entry in list_pending()
+    ]
+    return JSONResponse(rows)
 
 
 @router.post("/jobs/{job_id}/start")

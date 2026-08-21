@@ -96,3 +96,17 @@ def test_pending_entry_name_with_space_round_trips(client, isolated_dirs, monkey
     assert resp.status_code == 200
     job = Job.get_by_id(resp.json()["job_id"])
     assert job.source_path == str(isolated_dirs["inbox"] / "The calamity Club.mp3")
+
+
+def test_api_status_includes_pending_entry(client, isolated_dirs, monkeypatch):
+    pending_id = _settle_and_get_pending_id(isolated_dirs, "book.mp3", monkeypatch)
+
+    resp = client.get("/api/status")
+
+    assert resp.status_code == 200
+    ids = [row["id"] for row in resp.json()]
+    assert pending_id in ids
+    row = next(row for row in resp.json() if row["id"] == pending_id)
+    assert row["status"] == "pending"
+    assert row["progress_pct"] == 0
+    assert row["progress_stage"] is None
