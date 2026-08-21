@@ -61,8 +61,7 @@ through a fixed set of statuses:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending
-    pending --> queued: "Find this book" / AUTO_START_PROCESSING
+    [*] --> queued: "Find this book" / AUTO_START_PROCESSING claims a settled inbox entry
     queued --> detecting
     detecting --> awaiting_metadata_confirm: search ran
     detecting --> failed: detection error
@@ -77,10 +76,23 @@ stateDiagram-v2
     failed --> [*]
 ```
 
+Before a `Job` row exists at all, a settled-but-unclaimed inbox entry is
+tracked purely in memory by `app/watcher.py` (`list_pending()`,
+`claim_pending()`) and rendered as a `PendingEntry` stand-in - see that
+module's docstring. A `Job` only comes into existence at the moment
+something claims the entry (`app/queue.py`'s `start_new_job()`), whether
+that's a user clicking "Find this book" or `AUTO_START_PROCESSING`
+claiming it automatically. This means a file moved or deleted directly
+through the filesystem before being claimed is never orphaned: there's no
+row to go stale, since nothing was ever persisted for it.
+
 A separate `dismissed` boolean (not a status) can be set on a job in
-almost any state, to hide it from the UI without deleting its row —
-`app/db.py`'s comment on that field explains why deleting outright would
-be a real bug (the watcher would re-detect the source file as new).
+almost any state, to hide it from the UI without deleting its row -
+`app/db.py`'s comment on that field explains why. This only matters for a
+job that's already been claimed (see above) - an unclaimed entry has no
+row to dismiss; removing one before it's ever looked up just cleans up
+its source file directly (`app/web/routes.py`'s `pending:` branch of
+`/jobs/{id}/remove`) with nothing left to hide.
 
 Another separate, informational-only field: `source_duration_sec`, the
 sum of `ffutil.get_duration_sec()` across a job's audio files, computed
@@ -96,7 +108,7 @@ distance (`app/web/routes.py:_board_context`):
 
 | Group | Statuses |
 |---|---|
-| Needs Input | `pending`, `queued`, `detecting`, `awaiting_metadata_confirm`, `failed`, `cancelled` |
+| Needs Input | unclaimed `PendingEntry` stand-ins (rendered with status `pending`, but not a real `Job` status - see above), `queued`, `detecting`, `awaiting_metadata_confirm`, `failed`, `cancelled` |
 | Converting | `ready`, `processing` |
 | Done | `done` |
 

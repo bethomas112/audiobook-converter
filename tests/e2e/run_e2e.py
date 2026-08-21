@@ -101,19 +101,28 @@ def main():
 
     log("=== Waiting for the watcher to detect + settle the drop-off ===")
 
-    def find_job():
-        rows = db_query(f"SELECT * FROM job WHERE source_path LIKE '%{source_book.name}%' ORDER BY id DESC LIMIT 1")
-        return rows[0] if rows else None
-
-    job = wait_for(find_job, timeout=90, desc="job row created by watcher")
-    job_id = job["id"]
-    log(f"Job {job_id}: status={job['status']}")
-
-    if job["status"] == "pending":
-        log("=== POST /jobs/{id}/start ===")
-        status, body = http("POST", f"/jobs/{job_id}/start")
-        log(f"POST start -> {status} {body}")
+    def find_pending():
+        status, body = http("GET", "/api/status")
         assert status == 200
+        # http() returns the raw response text, not a parsed object - every
+        # other call site in this script only logs `body` or checks
+        # `status`, so this is the first spot that needs to actually read
+        # structured data out of it.
+        rows = json.loads(body)
+        for row in rows:
+            if isinstance(row["id"], str) and row["id"].startswith("pending:") and source_book.name in row["id"]:
+                return row
+        return None
+
+    pending_row = wait_for(find_pending, timeout=90, desc="pending entry reported by the watcher")
+    log(f"Pending entry: id={pending_row['id']}")
+
+    log("=== POST /jobs/{pending-id}/start ===")
+    status, body = http("POST", f"/jobs/{pending_row['id']}/start")
+    log(f"POST start -> {status} {body}")
+    assert status == 200
+    job_id = json.loads(body)["job_id"]
+    log(f"Claimed as Job {job_id}")
 
     def detection_done():
         j = get_job_row(job_id)
