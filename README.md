@@ -1,5 +1,7 @@
 # Audiobook Converter
 
+[![Tests](https://github.com/bethomas112/audiobook-converter/actions/workflows/tests.yml/badge.svg)](https://github.com/bethomas112/audiobook-converter/actions/workflows/tests.yml)
+
 A self-hosted tool that turns a downloaded audiobook — an M4B file, a
 folder of chapter/CD-split MP3s, or a single monolithic MP3 — into a
 properly tagged, chaptered M4B. A web UI lets you confirm each step,
