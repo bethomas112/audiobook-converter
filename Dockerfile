@@ -1,8 +1,13 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg gosu \
     && rm -rf /var/lib/apt/lists/*
+
+# Baked-in UID/GID 1000 is just a starting point - entrypoint.sh reassigns
+# it to match PUID/PGID at container start, so this default only matters
+# when those env vars are left unset.
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser -M appuser
 
 WORKDIR /app
 
@@ -10,8 +15,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
+COPY entrypoint.sh run.sh .
+RUN chmod +x entrypoint.sh run.sh
 
 ENV PYTHONUNBUFFERED=1
 

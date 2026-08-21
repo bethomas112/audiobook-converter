@@ -1,28 +1,24 @@
 #!/bin/bash
-# Runs the two processes this app needs inside one container: the Huey
-# consumer (actually converts books - see app/queue.py) and the FastAPI
-# web server (serves the UI and runs the inbox watcher - see app/main.py).
-# They only ever talk to each other through the shared SQLite database,
-# never directly.
+# Runs as root (the image's default user) just long enough to line up the
+# baked-in `appuser` with the PUID/PGID the operator asked for, fix
+# ownership of the data directories, then permanently drop root before
+# the app itself ever runs - see run.sh for the actual processes.
 #
-# `wait -n` blocks until EITHER process exits, then the trap kills whatever
-# is still running and this script exits with the same code - so a crash
-# in either one stops the container instead of quietly leaving the other
-# half running (which Docker's restart policy would never see and fix).
+# Same PUID/PGID convention as the linuxserver.io-style images (sonarr,
+# etc.): unset means "run as UID/GID 1000", matching appuser's baked-in
+# default so the usermod/groupmod calls below are no-ops in that case.
 set -e
 
-python -m huey.bin.huey_consumer app.queue.huey -w 1 &
-HUEY_PID=$!
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
 
-uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-2012}" &
-WEB_PID=$!
+groupmod -o -g "$PGID" appuser
+usermod -o -u "$PUID" appuser
 
-trap 'kill -TERM $HUEY_PID $WEB_PID 2>/dev/null' TERM INT
+# Non-recursive: fixes ownership of the mount points themselves without
+# walking a potentially large existing archive/output library on every
+# container start. New files appuser creates are already owned correctly;
+# this only matters for directories a bind mount brought in from the host.
+chown appuser:appuser /data/inbox /data/work /data/archive /data/output /data/config
 
-wait -n $HUEY_PID $WEB_PID
-EXIT_CODE=$?
-
-kill -TERM $HUEY_PID $WEB_PID 2>/dev/null
-wait
-
-exit $EXIT_CODE
+exec gosu appuser ./run.sh

@@ -122,6 +122,7 @@ points — set the actual host-side locations via the `volumes:` section of
 
 | Variable | Purpose | Default |
 |---|---|---|
+| `PUID` / `PGID` | UID/GID the container runs as after dropping root; match your host user so bind-mounted files come out owned by you | `1000` / `1000` |
 | `INBOX_DIR` | Watched drop folder | `/data/inbox` |
 | `WORK_DIR` | Scratch space during conversion | `/data/work` |
 | `ARCHIVE_DIR` | Where source files land after processing | `/data/archive` |
@@ -148,6 +149,17 @@ points — set the actual host-side locations via the `volumes:` section of
 
 `WEB_UI_AUTH=none` is intended for a trusted LAN only — don't expose this
 tool directly to the internet.
+
+### Running as non-root (PUID/PGID)
+
+The container never runs the app as root. `entrypoint.sh` starts as root
+just long enough to reassign the image's baked-in `appuser` to the
+`PUID`/`PGID` you set (default `1000`/`1000`) and fix ownership of the
+data directories, then `exec`s into `gosu appuser` before anything from
+`run.sh` runs — same convention as linuxserver.io-style images (sonarr,
+etc.). Set `PUID`/`PGID` in `.env` to your host user's `id -u`/`id -g` so
+files written to the bind-mounted `inbox`/`work`/`archive`/`output`
+folders come out owned by you instead of UID/GID 1000.
 
 ### Why CONFIG_DIR is a named Docker volume (SQLite "disk I/O error")
 
