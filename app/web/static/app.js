@@ -102,12 +102,22 @@
     transition.finished.catch(function () {});
     return transition;
   }
+  // Returns a promise that resolves only once `swap` has actually run and
+  // its DOM changes are applied - callers MUST chain any post-swap work
+  // (rewiring listeners, rebuilding waveforms) off this promise rather than
+  // running it right after calling withViewTransition(). When the browser
+  // supports the View Transitions API, document.startViewTransition()'s
+  // callback runs asynchronously (not in the same task), so code that
+  // assumed `swap` had already applied by the time the call returned would
+  // silently wire listeners onto the stale, about-to-be-replaced DOM
+  // instead of the fresh nodes the swap installs a moment later.
   function withViewTransition(swap) {
     if (inTransition || typeof document.startViewTransition !== "function") {
       swap();
-      return;
+      return Promise.resolve();
     }
-    settleTransition(document.startViewTransition(swap));
+    var transition = settleTransition(document.startViewTransition(swap));
+    return transition.updateCallbackDone;
   }
 
   function updateLivePill(jobs) {
@@ -172,12 +182,13 @@
   // ---- panel loading (on demand - only one panel ever lives in the DOM) ----
   function loadPanel(jobId) {
     return getHtml("/fragments/panel/" + jobId).then(function (html) {
-      withViewTransition(function () {
+      return withViewTransition(function () {
         detail.innerHTML = html;
+      }).then(function () {
+        currentPanelId = String(jobId);
+        buildAllWaveforms(detail);
+        wirePanelInteractions(detail);
       });
-      currentPanelId = String(jobId);
-      buildAllWaveforms(detail);
-      wirePanelInteractions(detail);
     });
   }
 
@@ -193,13 +204,14 @@
   // ---- rail + now-converting refresh ----
   function refreshRail() {
     return getHtml("/fragments/rail").then(function (html) {
-      withViewTransition(function () {
+      return withViewTransition(function () {
         var rail = document.getElementById("rail");
         rail.outerHTML = html;
+      }).then(function () {
+        wireRailInteractions();
+        var activeItem = document.querySelector(".queue-item.active");
+        if (activeItem) activeItem.classList.add("active");
       });
-      wireRailInteractions();
-      var activeItem = document.querySelector(".queue-item.active");
-      if (activeItem) activeItem.classList.add("active");
     });
   }
 
@@ -210,11 +222,12 @@
       var next = wrapper.firstElementChild;
       var current = document.getElementById("nowConverting");
       if (current && next) {
-        withViewTransition(function () {
+        return withViewTransition(function () {
           current.replaceWith(next);
+        }).then(function () {
+          buildAllWaveforms(document.querySelector(".topbar"));
+          wireNowConverting();
         });
-        buildAllWaveforms(document.querySelector(".topbar"));
-        wireNowConverting();
       }
     });
   }
@@ -238,11 +251,12 @@
           next.classList.add("active");
           return loadPanel(next.getAttribute("data-target"));
         }
-        withViewTransition(function () {
+        return withViewTransition(function () {
           detail.innerHTML =
             '<div class="card"><p class="waiting-note">Nothing here yet. Drop an audiobook into the inbox folder to get started.</p></div>';
+        }).then(function () {
+          currentPanelId = null;
         });
-        currentPanelId = null;
       });
     }
 
