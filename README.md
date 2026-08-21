@@ -216,6 +216,12 @@ renders as `Brandon Sanderson/Mistborn/2006 - The Final Empire (Mistborn #1)`
 for a book in a series, or `Brandon Sanderson/2006 - Some Standalone Book`
 for one that isn't.
 
+To use a literal `[` or `]` in the output rather than an optional section,
+escape it as `\[` or `\]` — this works on its own or nested inside an
+optional section, e.g. `{title}[  \[{series} {series_index}\]]` renders as
+`Blackflame  [Cradle 3]`, matching a library organized like
+`Blackflame (2019) [Cradle 3].m4b`.
+
 ## Tag mapping
 
 MP4 has no dedicated "series" atom, so this follows the convention used

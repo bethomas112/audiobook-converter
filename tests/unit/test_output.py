@@ -75,6 +75,37 @@ def test_full_library_folder_template_no_series():
     assert result == "Brandon Sanderson/2010 - Some Standalone Book"
 
 
+def test_escaped_brackets_render_as_literal_outside_optional_section():
+    """\\[ and \\] outside any optional section are literal characters, not
+    the optional-section syntax.
+    """
+    result = render_template("{title} \\[literal\\]", {"title": "Some Book"})
+    assert result == "Some Book [literal]"
+
+
+def test_escaped_brackets_nested_inside_optional_section_when_present():
+    """The Cradle-library case: literal brackets wrapping series/index,
+    nested inside the real optional-drop brackets.
+    """
+    result = render_template(
+        "{title}[  \\[{series} {series_index}\\]]",
+        {"title": "Blackflame", "series": "Cradle", "series_index": "3"},
+    )
+    assert result == "Blackflame  [Cradle 3]"
+
+
+def test_escaped_brackets_nested_inside_optional_section_dropped_when_empty():
+    """When the referenced placeholder is empty, the whole bracketed span -
+    escaped literal brackets included - is dropped, matching the existing
+    "drop the whole span" semantics.
+    """
+    result = render_template(
+        "{title}[  \\[{series} {series_index}\\]]",
+        {"title": "Blackflame", "series": "", "series_index": ""},
+    )
+    assert result == "Blackflame"
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [

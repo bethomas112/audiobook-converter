@@ -13,6 +13,13 @@ _BRACKET_RE = re.compile(r"\[([^\[\]]*)\]")
 
 INVALID_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
 
+# Private-use sentinels standing in for escaped `\[` / `\]` while
+# _BRACKET_RE runs, so escaped brackets can't be mistaken for the start/end
+# of an optional section (and can safely appear inside one). Swapped back
+# to literal `[` / `]` once all substitution is done.
+_LITERAL_BRACKET_OPEN = "\x00LB\x00"
+_LITERAL_BRACKET_CLOSE = "\x00RB\x00"
+
 
 def sanitize_path_component(value: str) -> str:
     value = INVALID_CHARS_RE.sub("", value)
@@ -23,9 +30,11 @@ def sanitize_path_component(value: str) -> str:
 def render_template(template: str, values: dict) -> str:
     """Fills {placeholder} tokens from values. A [bracketed section] drops
     out entirely if any placeholder inside it is empty - e.g. a book with
-    no series - rather than leaving stray separators behind. See the
-    LIBRARY_*_TEMPLATE / STANDALONE_FILENAME_TEMPLATE docs in .env.example
-    for the placeholder list and worked examples.
+    no series - rather than leaving stray separators behind. Use \\[ and \\]
+    to render literal square brackets instead - e.g. for a library like
+    "Blackflame (2019) [Cradle 3].m4b". See the LIBRARY_*_TEMPLATE /
+    STANDALONE_FILENAME_TEMPLATE docs in .env.example for the placeholder
+    list and worked examples.
     """
     def render_bracket(match: re.Match) -> str:
         inner = match.group(1)
@@ -34,8 +43,10 @@ def render_template(template: str, values: dict) -> str:
             return ""
         return _PLACEHOLDER_RE.sub(lambda m: str(values.get(m.group(1), "")), inner)
 
-    result = _BRACKET_RE.sub(render_bracket, template)
+    escaped = template.replace("\\[", _LITERAL_BRACKET_OPEN).replace("\\]", _LITERAL_BRACKET_CLOSE)
+    result = _BRACKET_RE.sub(render_bracket, escaped)
     result = _PLACEHOLDER_RE.sub(lambda m: str(values.get(m.group(1), "")), result)
+    result = result.replace(_LITERAL_BRACKET_OPEN, "[").replace(_LITERAL_BRACKET_CLOSE, "]")
     return result
 
 
