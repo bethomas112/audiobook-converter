@@ -30,6 +30,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import config
 from app.db import Job
 from app.pipeline import metadata
+from app.pipeline import archive
 from app.queue import (
     cancel_job,
     confirm_metadata,
@@ -37,8 +38,9 @@ from app.queue import (
     reorder_queue,
     requeue_job,
     start_job,
+    start_new_job,
 )
-from app.watcher import list_pending
+from app.watcher import claim_pending, list_pending
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/web/templates")
@@ -252,14 +254,26 @@ def api_status(_=Depends(require_auth)):
 
 
 @router.post("/jobs/{job_id}/start")
-def start(job_id: int, _=Depends(require_auth)):
-    job = Job.get_or_none(Job.id == job_id)
+def start(job_id: str, _=Depends(require_auth)):
+    if job_id.startswith("pending:"):
+        name = urllib.parse.unquote(job_id[len("pending:"):])
+        entry = claim_pending(name)
+        if entry is None:
+            raise HTTPException(status_code=404)
+        job = start_new_job(entry)
+        return JSONResponse({"ok": True, "job_id": job.id})
+
+    try:
+        numeric_id = int(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404)
+    job = Job.get_or_none(Job.id == numeric_id)
     if job is None:
         raise HTTPException(status_code=404)
     job.status = Job.STATUS_QUEUED
     job.touch_and_save()
-    start_job(job_id)
-    return JSONResponse({"ok": True})
+    start_job(numeric_id)
+    return JSONResponse({"ok": True, "job_id": job.id})
 
 
 @router.post("/jobs/{job_id}/confirm")
@@ -346,10 +360,22 @@ def requeue(job_id: int, _=Depends(require_auth)):
 
 
 @router.post("/jobs/{job_id}/remove")
-def remove(job_id: int, _=Depends(require_auth)):
-    if Job.get_or_none(Job.id == job_id) is None:
+def remove(job_id: str, _=Depends(require_auth)):
+    if job_id.startswith("pending:"):
+        name = urllib.parse.unquote(job_id[len("pending:"):])
+        entry = claim_pending(name)
+        if entry is None:
+            raise HTTPException(status_code=404)
+        archive.handle_source_cleanup(entry, log=print)
+        return JSONResponse({"ok": True})
+
+    try:
+        numeric_id = int(job_id)
+    except ValueError:
         raise HTTPException(status_code=404)
-    remove_job(job_id)
+    if Job.get_or_none(Job.id == numeric_id) is None:
+        raise HTTPException(status_code=404)
+    remove_job(numeric_id)
     return JSONResponse({"ok": True})
 
 

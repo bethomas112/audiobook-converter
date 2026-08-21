@@ -13,12 +13,8 @@ from fastapi.testclient import TestClient
 from app.db import Job
 from app.web.routes import router
 
-
-@pytest.fixture
-def client(isolated_dirs):
-    app = FastAPI()
-    app.include_router(router)
-    return TestClient(app)
+# The `client` fixture lives in tests/integration/conftest.py (shared with
+# test_pending_routes.py).
 
 
 def test_static_favicon_is_served():
@@ -250,7 +246,10 @@ def test_start_endpoint_transitions_to_queued_and_runs_detection(client, monkeyp
 
     resp = client.post(f"/jobs/{job.id}/start")
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    # job_id is additive (see the pending: branch of this route, which
+    # needs it to report the newly-created Job's real id) - app.js only
+    # checks res.ok, so this stays backward compatible.
+    assert resp.json() == {"ok": True, "job_id": job.id}
 
     job = Job.get_by_id(job.id)
     assert job.status == Job.STATUS_AWAITING_METADATA_CONFIRM
