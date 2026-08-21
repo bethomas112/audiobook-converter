@@ -19,6 +19,17 @@ from app.db import Job
 from app.queue import start_job
 
 
+# NAS-generated system directories that can appear inside a bind-mounted
+# inbox alongside dotfiles - never a real drop-off, so ignored the same way.
+# @eaDir is Synology DSM's thumbnail/index cache, auto-created in every
+# folder on a DSM volume (including a folder mounted into this container).
+_IGNORED_TOP_LEVEL_NAMES = {"@eaDir"}
+
+
+def _is_ignored_top_level_name(name: str) -> bool:
+    return name.startswith(".") or name in _IGNORED_TOP_LEVEL_NAMES
+
+
 class _ActivityHandler(FileSystemEventHandler):
     def __init__(self, activity: dict, lock: threading.Lock):
         self._activity = activity
@@ -33,10 +44,10 @@ class _ActivityHandler(FileSystemEventHandler):
         if not rel.parts:
             return None
         top_name = rel.parts[0]
-        if top_name.startswith("."):
-            # Ignore dotfiles/dot-directories (e.g. macOS Finder's
-            # .DS_Store) - they're never a real drop-off and would
-            # otherwise become a permanently-stuck, unprocessable job.
+        if _is_ignored_top_level_name(top_name):
+            # Never a real drop-off - would otherwise become a
+            # permanently-stuck, unprocessable job (see
+            # _IGNORED_TOP_LEVEL_NAMES above for the NAS-specific case).
             return None
         return config.INBOX_DIR / top_name
 
@@ -57,9 +68,7 @@ def _known_source_paths() -> set:
 def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threading.Event):
     with lock:
         for entry in config.INBOX_DIR.iterdir():
-            if entry.name.startswith("."):
-                # Ignore dotfiles/dot-directories (e.g. a pre-existing
-                # .DS_Store) so they never become a permanently-stuck job.
+            if _is_ignored_top_level_name(entry.name):
                 continue
             activity.setdefault(entry, time.time())
 

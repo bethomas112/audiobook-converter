@@ -117,6 +117,45 @@ def test_dotfile_drop_in_is_never_queued(isolated_dirs, running_watcher):
     assert job.source_path == str(isolated_dirs["inbox"] / "book.mp3")
 
 
+def test_synology_eadir_drop_in_is_never_queued(isolated_dirs, running_watcher):
+    """Synology DSM auto-creates an @eaDir folder in every directory on a
+    DSM volume, including one bind-mounted in as the inbox - it must never
+    become a Job, same as a dotfile.
+    """
+    (isolated_dirs["inbox"] / "@eaDir").mkdir()
+    (isolated_dirs["inbox"] / "@eaDir" / "SYNOINDEX_THUMB_ME.txt").write_bytes(b"x" * 100)
+
+    time.sleep(1.0)  # comfortably past one checker tick and the settle window
+    assert Job.select().count() == 0
+
+    # A normal drop-off alongside it should still be picked up as usual.
+    (isolated_dirs["inbox"] / "book.mp3").write_bytes(b"y" * 1000)
+    assert _wait_until(lambda: Job.select().count() == 1, timeout=5.0)
+    job = Job.select().first()
+    assert job.source_path == str(isolated_dirs["inbox"] / "book.mp3")
+
+
+def test_preexisting_synology_eadir_in_inbox_is_never_queued(isolated_dirs, monkeypatch):
+    """An @eaDir already sitting in the inbox before the watcher starts
+    (picked up by the initial iterdir() scan) must also be ignored.
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.4)
+    monkeypatch.setattr(config, "AUTO_START_PROCESSING", False)
+
+    (isolated_dirs["inbox"] / "@eaDir").mkdir()
+
+    observer, stop_event = start_watcher()
+    try:
+        time.sleep(1.0)  # comfortably past one checker tick and the settle window
+        assert Job.select().count() == 0
+    finally:
+        stop_event.set()
+        observer.stop()
+        observer.join(timeout=5)
+
+
 def test_preexisting_dotfile_in_inbox_is_never_queued(isolated_dirs, monkeypatch):
     """A dotfile already sitting in the inbox before the watcher starts
     (picked up by the initial iterdir() scan) must also be ignored.
