@@ -197,6 +197,21 @@ def reorder_queue(job_id: int, direction: str):
     ready_jobs[swap_with].save()
 
 
+def start_new_job(source_path: Path) -> Job:
+    """Creates a Job for a freshly-claimed inbox entry and immediately
+    enqueues detection - the single place a Job first comes into being,
+    whether triggered by a user's "Find this book" click (see
+    app/web/routes.py's pending-entry branch of the /start route) or by
+    AUTO_START_PROCESSING claiming a settled entry automatically the
+    moment it settles (see app/watcher.py's _settle_checker_loop).
+    """
+    job = Job.create(source_path=str(source_path), status=Job.STATUS_QUEUED)
+    job.append_log("Detected in inbox; waiting for confirmation to start.")
+    job.touch_and_save()
+    start_job(job.id)
+    return job
+
+
 def remove_job(job_id: int):
     """Hides a job from the active queue views without deleting its row -
     see Job.dismissed for why deleting the row outright would be a real
