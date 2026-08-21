@@ -21,12 +21,20 @@ def _unique_destination(dest: Path) -> Path:
         counter += 1
 
 
-def handle_source_cleanup(source_path: Path, log) -> None:
+def handle_source_cleanup(source_path: Path, log) -> Path | None:
+    """Returns the source's new location if it was moved (archive mode), or
+    None if it was deleted or left where it was (keep mode). Callers that
+    track a source's location (e.g. Job.source_path) should update it to
+    match whenever a Path comes back, for an accurate record of where the
+    source ended up - app/watcher.py's dedup check doesn't depend on this
+    being kept in sync (it checks the filesystem directly), so this is
+    purely for record-keeping, not correctness.
+    """
     mode = config.SOURCE_CLEANUP_MODE
 
     if mode == "keep":
         log(f"SOURCE_CLEANUP_MODE=keep; leaving source in place at {source_path}.")
-        return
+        return None
 
     if mode == "delete":
         if source_path.is_dir():
@@ -34,12 +42,13 @@ def handle_source_cleanup(source_path: Path, log) -> None:
         else:
             source_path.unlink()
         log(f"Deleted source at {source_path}.")
-        return
+        return None
 
     # archive (default)
     dest = _unique_destination(config.ARCHIVE_DIR / source_path.name)
     shutil.move(str(source_path), str(dest))
     log(f"Archived source to {dest}.")
+    return dest
 
 
 def purge_expired_archives(log=print) -> int:

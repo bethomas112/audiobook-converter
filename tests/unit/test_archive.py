@@ -75,6 +75,43 @@ def test_cleanup_mode_archive_dedupes_name_collision(isolated_dirs, monkeypatch)
     assert (isolated_dirs["archive"] / "book (1).m4b").read_bytes() == b"new data"
 
 
+def test_cleanup_mode_keep_returns_none(isolated_dirs, monkeypatch):
+    """The caller (see app/queue.py) uses a non-None return to know the
+    source moved and update Job.source_path to match - keep mode never
+    moves anything, so it must return None.
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "keep")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+
+    assert handle_source_cleanup(source, log=lambda *_: None) is None
+
+
+def test_cleanup_mode_delete_returns_none(isolated_dirs, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "delete")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+
+    assert handle_source_cleanup(source, log=lambda *_: None) is None
+
+
+def test_cleanup_mode_archive_returns_new_path(isolated_dirs, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "archive")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+
+    result = handle_source_cleanup(source, log=lambda *_: None)
+
+    assert result == isolated_dirs["archive"] / "book.m4b"
+    assert result.exists()
+
+
 def _set_mtime_days_ago(path, days):
     ts = time.time() - (days * 86400)
     os.utime(path, (ts, ts))

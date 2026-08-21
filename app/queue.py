@@ -198,11 +198,21 @@ def reorder_queue(job_id: int, direction: str):
 
 
 def remove_job(job_id: int):
-    """Hides a job from the active queue views without deleting its row or
-    touching its source file - see Job.dismissed for why deleting the row
-    outright would be a real bug (the watcher would re-detect the source).
+    """Hides a job from the active queue views without deleting its row -
+    see Job.dismissed for why deleting the row outright would be a real
+    bug (the watcher would re-detect a still-present source as new).
+
+    Runs the same SOURCE_CLEANUP_MODE cleanup a completed job's source
+    gets (see archive.handle_source_cleanup), so a removed job's source
+    stops sitting in the inbox exactly the way a converted one does,
+    rather than being left there to permanently occupy its path.
     """
     job = Job.get_by_id(job_id)
+    source_path = Path(job.source_path)
+    if source_path.exists():
+        new_path = archive.handle_source_cleanup(source_path, log=job.append_log)
+        if new_path is not None:
+            job.source_path = str(new_path)
     job.dismissed = True
     job.touch_and_save()
 
@@ -272,7 +282,9 @@ def process_job(job_id: int):
         job.destination_path = str(dest)
         job.append_log(f"Placed finished audiobook at {dest}.")
 
-        archive.handle_source_cleanup(Path(job.source_path), log=job.append_log)
+        new_source_path = archive.handle_source_cleanup(Path(job.source_path), log=job.append_log)
+        if new_source_path is not None:
+            job.source_path = str(new_source_path)
 
         job.status = Job.STATUS_DONE
         job.queue_order = None

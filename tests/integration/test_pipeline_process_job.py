@@ -66,7 +66,15 @@ def test_mp3_single_pipeline_standalone_output_with_silence_chapters(isolated_di
 
     # Source archived (default SOURCE_CLEANUP_MODE), not left in the inbox.
     assert not source.exists()
-    assert (isolated_dirs["archive"] / "Some Book.mp3").exists()
+    archived = isolated_dirs["archive"] / "Some Book.mp3"
+    assert archived.exists()
+
+    # source_path must follow the source to its new location - otherwise
+    # the watcher's dedup (app/watcher.py's _known_source_paths()) would
+    # permanently blacklist this book's original inbox path even though
+    # nothing is there anymore, blocking any future unrelated drop-off
+    # that happens to reuse the same filename.
+    assert job.source_path == str(archived)
 
 
 def test_mp3_multi_pipeline_library_output_with_source_boundary_chapters(isolated_dirs, monkeypatch, huey_immediate):

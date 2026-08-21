@@ -100,24 +100,26 @@ def test_source_with_existing_job_is_not_requeued(isolated_dirs, running_watcher
     assert Job.select().where(Job.source_path == str(f)).count() == 1
 
 
-def test_removed_source_path_reused_by_different_file_is_requeued(isolated_dirs, running_watcher):
-    """A dismissed (or done/failed) job's source path must not be
-    permanently blacklisted - if the user deletes that source and drops a
-    genuinely different file at the same path/name, it's a new drop-off and
-    should be queued, not silently swallowed by the same-path dedup that
-    exists to stop an untouched, still-present source from being
-    re-queued forever.
+def test_removed_source_path_is_freed_for_a_new_drop_off(isolated_dirs, running_watcher, monkeypatch):
+    """Removing a job (see app/queue.py's remove_job) cleans up its source
+    the same way a completed job's is cleaned up, per SOURCE_CLEANUP_MODE -
+    so the inbox path it used to occupy is genuinely free afterward. A new,
+    unrelated drop-off at that same name/path must be queued as new, not
+    silently swallowed by the same-path dedup that exists to stop an
+    untouched, still-present source from being re-queued forever.
     """
+    from app.config import config
+    from app import queue as queue_mod
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "archive")
+
     f = isolated_dirs["inbox"] / "book.mp3"
     f.write_bytes(b"x" * 100)
     assert _wait_until(lambda: Job.select().count() == 1, timeout=5.0)
     old_job = Job.select().first()
-    old_job.dismissed = True
-    old_job.source_mtime = f.stat().st_mtime
-    old_job.save()
+    queue_mod.remove_job(old_job.id)
 
-    f.unlink()
-    time.sleep(1.1)  # ensure the new file's mtime differs from the old one
+    assert not f.exists()  # moved to ARCHIVE_DIR by remove_job's cleanup
     f.write_bytes(b"y" * 200)
 
     assert _wait_until(lambda: Job.select().where(Job.dismissed == False).count() == 1, timeout=5.0)  # noqa: E712

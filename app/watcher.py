@@ -58,36 +58,21 @@ class _ActivityHandler(FileSystemEventHandler):
                 self._activity[entry] = time.time()
 
 
-def _known_sources() -> dict:
-    """Every source path that's ever had a Job created for it, mapped to
-    that job's recorded source_mtime (None if it doesn't have one - see
-    Job.source_mtime). A kept (non-cleaned-up) source still at a known path
-    with an unchanged mtime is the "not re-queued forever" case this
-    guards; a path reused by a genuinely different file (different mtime)
-    is not.
+def _known_source_paths() -> set:
+    """Every historical job's source_path that still has something sitting
+    at it right now, so a kept (non-cleaned-up) source in the inbox isn't
+    re-queued forever. Checking existence live - rather than trusting
+    Job.source_path to have been kept in sync with wherever
+    SOURCE_CLEANUP_MODE cleanup (remove_job() and process_job()'s
+    completion cleanup, both in app/queue.py) actually moved or deleted a
+    source to - covers all three cleanup modes uniformly: a `keep`d
+    source is still there (still blocks, unchanged from before cleanup-
+    aware dedup existed); a `delete`d or `archive`d one no longer is
+    (stops blocking), freeing that path for a genuinely new, unrelated
+    drop-off with the same name, without needing every code path that
+    moves or deletes a source to remember to update source_path correctly.
     """
-    known = {}
-    for j in Job.select(Job.source_path, Job.source_mtime):
-        known[Path(j.source_path)] = j.source_mtime
-    return known
-
-
-def _safe_mtime(entry: Path):
-    try:
-        return entry.stat().st_mtime
-    except OSError:
-        return None
-
-
-def _is_same_known_source(entry: Path, known_mtime) -> bool:
-    # None means either "this path was never seen before" (not in `known`
-    # at all - checked separately by the caller) or "a job exists for it
-    # but its original mtime was never recorded" - the latter can't safely
-    # be treated as "this is a new file," so it still blocks, same as
-    # before mtime tracking existed.
-    if known_mtime is None:
-        return True
-    return _safe_mtime(entry) == known_mtime
+    return {p for j in Job.select(Job.source_path) if (p := Path(j.source_path)).exists()}
 
 
 def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threading.Event):
@@ -100,7 +85,7 @@ def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threa
     while not stop_event.is_set():
         stop_event.wait(1)
         now = time.time()
-        known = _known_sources()
+        known = _known_source_paths()
 
         with lock:
             snapshot = list(activity.items())
@@ -110,14 +95,14 @@ def _settle_checker_loop(activity: dict, lock: threading.Lock, stop_event: threa
                 with lock:
                     activity.pop(entry, None)
                 continue
-            if entry in known and _is_same_known_source(entry, known[entry]):
+            if entry in known:
                 with lock:
                     activity.pop(entry, None)
                 continue
             if now - last_seen < config.SETTLE_WINDOW_SEC:
                 continue
 
-            job = Job.create(source_path=str(entry), source_mtime=_safe_mtime(entry))
+            job = Job.create(source_path=str(entry))
             if config.AUTO_START_PROCESSING:
                 job.append_log("Detected in inbox; auto-starting (AUTO_START_PROCESSING=true).")
                 job.status = Job.STATUS_QUEUED

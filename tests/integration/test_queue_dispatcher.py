@@ -155,3 +155,65 @@ def test_remove_job_hides_without_deleting_row(isolated_dirs):
     # Row still exists (see app/db.py's comment on `dismissed` for why
     # deleting it outright would make the watcher re-detect the source).
     assert Job.select().where(Job.id == job.id).exists()
+
+
+def test_remove_job_archives_source_and_updates_source_path(isolated_dirs, monkeypatch):
+    """Default SOURCE_CLEANUP_MODE=archive: removing a job must move its
+    source out of the inbox (same as a completed job's cleanup) and update
+    source_path to the new location, so the vacated inbox path is free for
+    a genuinely different future drop-off with the same name - see
+    app/watcher.py's _known_source_paths().
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "archive")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+    job = Job.create(source_path=str(source), status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    queue_mod.remove_job(job.id)
+
+    job = Job.get_by_id(job.id)
+    assert not source.exists()
+    assert job.source_path == str(isolated_dirs["archive"] / "book.m4b")
+
+
+def test_remove_job_deletes_source_when_cleanup_mode_delete(isolated_dirs, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "delete")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+    job = Job.create(source_path=str(source), status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    queue_mod.remove_job(job.id)
+
+    assert not source.exists()
+
+
+def test_remove_job_leaves_source_path_unchanged_when_cleanup_mode_keep(isolated_dirs, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "SOURCE_CLEANUP_MODE", "keep")
+    source = isolated_dirs["inbox"] / "book.m4b"
+    source.write_bytes(b"data")
+    job = Job.create(source_path=str(source), status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+
+    queue_mod.remove_job(job.id)
+
+    job = Job.get_by_id(job.id)
+    assert source.exists()
+    assert job.source_path == str(source)
+
+
+def test_remove_job_with_already_missing_source_does_not_error(isolated_dirs):
+    """The source may already be gone (manually deleted, or a job removed
+    twice) - remove_job() must not blow up trying to clean up nothing.
+    """
+    job = Job.create(
+        source_path=str(isolated_dirs["inbox"] / "gone.m4b"), status=Job.STATUS_AWAITING_METADATA_CONFIRM
+    )
+
+    queue_mod.remove_job(job.id)
+
+    assert Job.get_by_id(job.id).dismissed is True
