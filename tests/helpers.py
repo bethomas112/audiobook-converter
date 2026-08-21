@@ -41,6 +41,41 @@ def make_silence_mp3(path: Path, duration_sec: float, bitrate_kbps: int = 96):
     return path
 
 
+def make_header_garbage_mp3(path: Path) -> Path:
+    """A file with an .mp3 extension but no valid MP3 data at all - the
+    "whole file is unreadable" case the existing header-only ffprobe check
+    (ffutil.probe / get_duration_sec) already catches on its own, since
+    ffmpeg's mp3 demuxer can't even establish the format.
+    """
+    path.write_text("This is not an mp3 file, just plain text.")
+    return path
+
+
+def make_corrupt_mid_file_mp3(path: Path, duration_sec: float = 3.0, bitrate_kbps: int = 96) -> Path:
+    """A real, valid-header MP3 (via make_tone_mp3) with a chunk of its
+    middle bytes zeroed out - simulates a truncated download or disk error
+    that corrupts part of an otherwise-normal file, not the "whole file is
+    garbage" case make_header_garbage_mp3 covers.
+
+    This is the gap a header-only ffprobe check can't see: confirmed by
+    hand against real ffmpeg that ffutil.probe() (and therefore
+    get_duration_sec/get_audio_bitrate_kbps, which call it) reports exit 0
+    and a normal-looking duration for a file corrupted this way, while an
+    actual decode pass (ffutil.check_decodable) fails on it. This fixture
+    exists specifically to exercise that gap - see
+    tests/integration/test_ffutil.py's
+    test_check_decodable_catches_mid_file_corruption_a_header_probe_misses.
+    """
+    make_tone_mp3(path, duration_sec=duration_sec, bitrate_kbps=bitrate_kbps)
+    data = bytearray(path.read_bytes())
+    start = len(data) // 3
+    end = min(start + max(2000, len(data) // 10), len(data))
+    for i in range(start, end):
+        data[i] = 0
+    path.write_bytes(data)
+    return path
+
+
 def make_tone_silence_pattern_mp3(
     path: Path,
     segments: list[tuple[str, float]],
