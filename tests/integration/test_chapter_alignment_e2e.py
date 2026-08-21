@@ -181,13 +181,26 @@ def test_no_silence_book_with_name_marker_chapters_folds_and_anchors_on_files(
     file_durations = [durations_cycle[i % len(durations_cycle)] for i in range(52)]
     source_dir = isolated_dirs["inbox"] / "No Silence Book"
     source_dir.mkdir()
+    file_paths = []
     for i, dur in enumerate(file_durations):
-        make_tone_mp3(source_dir / f"part{i:03d}.mp3", duration_sec=dur)
+        p = source_dir / f"part{i:03d}.mp3"
+        make_tone_mp3(p, duration_sec=dur)
+        file_paths.append(p)
 
-    # 53 "real" chapters - the first 52 lengths exactly match the 52 files
-    # (so a chapter's own file-boundary and its own audnexus reference start
-    # line up exactly), plus one trailing real chapter with no matching file.
-    real_lengths = file_durations + [6.0]
+    # 53 "real" chapters - the first 52 lengths match the 52 files' own
+    # REAL, ffprobe-measured durations (not the nominal durations requested
+    # above), so a chapter's own file-boundary and its own audnexus
+    # reference start line up exactly. MP3 encodes in whole frames, so a
+    # request for e.g. exactly 6.0s never round-trips frame-exact - the
+    # real encoded duration is off by a few milliseconds, and exactly how
+    # much depends on the ffmpeg/lame build (confirmed: this test flaked
+    # between ffmpeg 9.0.1 and 7.1.5). Compounded across 52 files via
+    # _cumulative_file_starts, that was enough to occasionally flip which
+    # integer-second bucket _cluster_shift_check lands a chapter's shift
+    # in, dropping the verified-majority fraction below threshold. One
+    # trailing real chapter with no matching file keeps its nominal
+    # length, by design.
+    real_lengths = [ffutil.get_duration_sec(p) for p in file_paths] + [6.0]
 
     # 16 short (~2s) POV-name markers, spread through the 69-entry raw list -
     # each one immediately BEFORE the real chapter it gets folded onto.
