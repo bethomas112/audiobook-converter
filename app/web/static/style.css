@@ -398,7 +398,7 @@ details.chapters[open] summary .chev{transform:rotate(90deg);}
   pointer-events:none;
 }
 .toast{
-  pointer-events:auto; max-width:22rem; cursor:pointer;
+  pointer-events:auto; max-width:min(22rem, calc(100vw - 2.8rem)); cursor:pointer;
   background:var(--surface-2); border:1px solid var(--hairline-strong);
   border-left:3px solid var(--rust); border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,0.35);
