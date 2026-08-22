@@ -132,9 +132,57 @@
     pillText.textContent = convertingCount + " converting/queued · " + needsInputCount + " need input";
   }
 
+  // ---- error toasts (network/action failures) ----
+  var TOAST_DURATION_MS = 5000;
+  function getToastStack() {
+    var stack = document.getElementById("toastStack");
+    if (!stack) {
+      stack = document.createElement("div");
+      stack.id = "toastStack";
+      stack.className = "toast-stack";
+      document.body.appendChild(stack);
+    }
+    return stack;
+  }
+  function showErrorToast(message) {
+    var stack = getToastStack();
+    var toast = document.createElement("div");
+    toast.className = "toast";
+    var eyebrow = document.createElement("span");
+    eyebrow.className = "toast-eyebrow";
+    eyebrow.textContent = "Error";
+    var body = document.createElement("span");
+    body.className = "toast-message";
+    body.textContent = message;
+    toast.appendChild(eyebrow);
+    toast.appendChild(body);
+    toast.addEventListener("click", function () {
+      toast.remove();
+    });
+    stack.appendChild(toast);
+    setTimeout(function () {
+      toast.remove();
+    }, TOAST_DURATION_MS);
+  }
+
   function post(url, formData) {
     return fetch(url, { method: "POST", body: formData || new FormData() }).then(function (res) {
-      if (!res.ok) throw new Error("Request failed: " + url);
+      if (!res.ok) {
+        // FastAPI's HTTPException responses are {"detail": "..."} - surface
+        // that real message (e.g. the search route's "Enter a title or
+        // author to search.") rather than a generic failure string. Falls
+        // back to a generic message if the body isn't JSON or has no
+        // usable detail (e.g. a plain 500 with an HTML error page).
+        return res
+          .json()
+          .catch(function () {
+            return null;
+          })
+          .then(function (body) {
+            var message = (body && body.detail) || "Something went wrong - try again.";
+            throw new Error(message);
+          });
+      }
       return res;
     });
   }
@@ -307,9 +355,13 @@
         var direction = btn.getAttribute("data-direction");
         var fd = new FormData();
         fd.append("direction", direction);
-        post("/jobs/" + jobId + "/reorder", fd).then(function () {
-          return refreshBoard(currentPanelId).then(syncKnownGroups);
-        });
+        post("/jobs/" + jobId + "/reorder", fd)
+          .then(function () {
+            return refreshBoard(currentPanelId).then(syncKnownGroups);
+          })
+          .catch(function (e) {
+            showErrorToast(e.message);
+          });
       });
     });
   }
@@ -418,6 +470,9 @@
             var firstCard = next.querySelector(".candidate");
             if (firstCard) firstCard.click();
           })
+          .catch(function (e) {
+            showErrorToast(e.message);
+          })
           .finally(function () {
             if (submitBtn) submitBtn.disabled = false;
           });
@@ -429,9 +484,18 @@
       confirmForm.addEventListener("submit", function (e) {
         e.preventDefault();
         var jobId = confirmForm.getAttribute("data-job-id");
-        post("/jobs/" + jobId + "/confirm", new FormData(confirmForm)).then(function () {
-          return refreshBoard(jobId).then(syncKnownGroups);
-        });
+        var submitBtn = confirmForm.querySelector("button[type=submit]");
+        if (submitBtn) submitBtn.disabled = true;
+        post("/jobs/" + jobId + "/confirm", new FormData(confirmForm))
+          .then(function () {
+            return refreshBoard(jobId).then(syncKnownGroups);
+          })
+          .catch(function (e) {
+            showErrorToast(e.message);
+          })
+          .finally(function () {
+            if (submitBtn) submitBtn.disabled = false;
+          });
       });
     }
 
@@ -452,6 +516,9 @@
         post("/jobs/" + jobId + "/" + action)
           .then(function () {
             return refreshBoard(jobId).then(syncKnownGroups);
+          })
+          .catch(function (e) {
+            showErrorToast(e.message);
           })
           .finally(function () {
             btn.disabled = false;
