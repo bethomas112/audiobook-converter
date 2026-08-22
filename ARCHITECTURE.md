@@ -455,6 +455,13 @@ the frontend's job is fetching small fragments and swapping them in.
   in the View Transitions API when the browser supports it, so a real
   reload cross-fades instead of popping; unsupported browsers just get an
   instant swap as before.
+- `GET /api/summary` is a separate, external-facing read endpoint: aggregate
+  queue counts (`needs_input`/`converting`/`done`, using the exact same
+  groupings as `_board_context()`) plus the currently-processing job's
+  title/progress/stage, if any. It exists for the homepage dashboard
+  integration (a Custom API widget configured outside this repo, in
+  homepage's own `services.yaml`) rather than for this app's own UI, which
+  keeps using `/api/status`'s per-job rows.
 
 Fonts (Spectral, IBM Plex Sans/Mono) are self-hosted static files under
 `app/web/static/fonts/`, not a CDN dependency — this is a LAN tool that

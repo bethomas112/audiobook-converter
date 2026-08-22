@@ -232,6 +232,99 @@ def test_api_status_excludes_dismissed_jobs(client):
     assert resp.json() == []
 
 
+def test_api_summary_counts_match_board_groups(client):
+    Job.create(source_path="/a", status=Job.STATUS_PENDING)
+    Job.create(source_path="/b", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    Job.create(source_path="/c", status=Job.STATUS_READY, queue_order=1)
+    Job.create(source_path="/d", status=Job.STATUS_DONE)
+    Job.create(source_path="/e", status=Job.STATUS_DONE)
+
+    resp = client.get("/api/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["needs_input"] == 2
+    assert body["converting"] == 1
+    assert body["done"] == 2
+
+
+def test_api_summary_excludes_dismissed_jobs(client):
+    Job.create(source_path="/a", status=Job.STATUS_DONE, dismissed=True)
+    resp = client.get("/api/summary")
+    body = resp.json()
+    assert body["needs_input"] == 0
+    assert body["converting"] == 0
+    assert body["done"] == 0
+
+
+def test_api_summary_counts_pending_watcher_entries_as_needs_input(client, isolated_dirs, monkeypatch):
+    from app.config import config
+    from app.watcher import start_watcher
+
+    monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.1)
+    observer, stop_event = start_watcher()
+    try:
+        (isolated_dirs["inbox"] / "Some Book.mp3").write_bytes(b"x" * 100)
+        import time
+
+        deadline = time.time() + 5.0
+        needs_input = 0
+        while time.time() < deadline:
+            needs_input = client.get("/api/summary").json()["needs_input"]
+            if needs_input == 1:
+                break
+            time.sleep(0.1)
+        assert needs_input == 1
+    finally:
+        stop_event.set()
+        observer.stop()
+        observer.join(timeout=5)
+
+
+def test_api_summary_current_is_null_when_nothing_processing(client):
+    Job.create(source_path="/a", status=Job.STATUS_READY, queue_order=1)
+    resp = client.get("/api/summary")
+    assert resp.json()["current"] is None
+
+
+def test_api_summary_current_reflects_processing_job(client):
+    Job.create(
+        source_path="/a",
+        status=Job.STATUS_PROCESSING,
+        progress_pct=42,
+        progress_stage="Transcoding audio",
+        selected_metadata_json='{"title": "Project Hail Mary"}',
+    )
+    resp = client.get("/api/summary")
+    assert resp.json()["current"] == {
+        "title": "Project Hail Mary",
+        "progress_pct": 42,
+        "stage": "Transcoding audio",
+    }
+
+
+def test_api_summary_current_falls_back_to_title_guess(client):
+    Job.create(
+        source_path="/a",
+        status=Job.STATUS_PROCESSING,
+        title_guess="Untitled Guess",
+        progress_pct=10,
+    )
+    resp = client.get("/api/summary")
+    current = resp.json()["current"]
+    assert current["title"] == "Untitled Guess"
+    assert current["stage"] is None
+
+
+def test_api_summary_also_requires_auth(client, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "WEB_UI_AUTH", "basic")
+    monkeypatch.setattr(config, "WEB_UI_USERNAME", "brady")
+    monkeypatch.setattr(config, "WEB_UI_PASSWORD", "s3cret")
+    resp = client.get("/api/summary")
+    assert resp.status_code == 401
+
+
 def test_start_endpoint_transitions_to_queued_and_runs_detection(client, monkeypatch, huey_immediate):
     from app.pipeline import metadata as metadata_mod
     from tests.helpers import make_tone_mp3

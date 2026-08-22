@@ -261,6 +261,28 @@ def api_status(_=Depends(require_auth)):
     return JSONResponse(rows)
 
 
+@router.get("/api/summary")
+def api_summary(request: Request, _=Depends(require_auth)):
+    ctx = _board_context(request)
+    current = None
+    job = ctx["processing_job"]
+    if job is not None:
+        meta = job.selected_metadata
+        current = {
+            "title": (meta or {}).get("title") or job.title_guess,
+            "progress_pct": job.progress_pct,
+            "stage": job.progress_stage,
+        }
+    return JSONResponse(
+        {
+            "needs_input": len(ctx["needs_input"]),
+            "converting": len(ctx["converting"]),
+            "done": len(ctx["done"]),
+            "current": current,
+        }
+    )
+
+
 @router.post("/jobs/{job_id}/start")
 def start(job_id: str, _=Depends(require_auth)):
     if job_id.startswith("pending:"):
