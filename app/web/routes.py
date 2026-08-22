@@ -7,6 +7,8 @@ uses them:
                           in without a full page reload
   - GET /api/status      a small JSON poll target - just id/status/progress
                           per job, cheap enough to hit every couple seconds
+  - GET /api/summary     counts by board group plus the current job, for the
+                          homepage dashboard widget - not driven by app.js
   - POST /jobs/{id}/...  actions (start, confirm, cancel, requeue, remove,
                           reorder, search); most just return {"ok": true}
                           and let the frontend re-fetch whatever fragments

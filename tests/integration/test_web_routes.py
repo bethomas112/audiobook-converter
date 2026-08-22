@@ -258,7 +258,7 @@ def test_api_summary_excludes_dismissed_jobs(client):
 
 def test_api_summary_counts_pending_watcher_entries_as_needs_input(client, isolated_dirs, monkeypatch):
     from app.config import config
-    from app.watcher import start_watcher
+    from app.watcher import claim_pending, start_watcher
 
     monkeypatch.setattr(config, "SETTLE_WINDOW_SEC", 0.1)
     observer, stop_event = start_watcher()
@@ -275,6 +275,7 @@ def test_api_summary_counts_pending_watcher_entries_as_needs_input(client, isola
             time.sleep(0.1)
         assert needs_input == 1
     finally:
+        claim_pending("Some Book.mp3")
         stop_event.set()
         observer.stop()
         observer.join(timeout=5)
