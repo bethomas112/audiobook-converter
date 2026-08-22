@@ -1,5 +1,34 @@
 # Corrupt Source File Validation Implementation Plan
 
+> **Outcome (post-implementation):** Tasks 1–5 below were implemented,
+> individually reviewed, and passed a final whole-branch review — but
+> Tasks 2–4 (the tier-2 full-decode `check_decodable()`/`validate_sources()`
+> pre-transcode check) were reverted afterward, on Brady's call, once
+> real-world testing surfaced two things a design review alone hadn't:
+> (1) the actual real-world failure this plan was built around (`037.mp3`,
+> a truncated stub) was already caught by the pre-existing tier-1 header
+> probe on its own — Task 5's one-line message clarification was the only
+> change that failure actually needed; (2) tier 2's `-xerror` check was
+> stricter than the real transcode itself. Concatenating a file with a
+> harmless, fully-recoverable mid-stream decode hiccup (verified directly:
+> correct audio, correctly positioned, at every timestamp checked) through
+> the *actual* production transcode command produced a perfectly good
+> book — but tier 2 would have rejected that same book outright, since it
+> aborts on the first decode error regardless of whether the real
+> transcode can recover from it. Weighed against a genuinely-corrupt
+> multi-file source (a truncated stub embedded among good neighbors),
+> where the real transcode does *not* error but silently splices in a
+> multi-minute block of true digital silence with `STATUS_DONE` and no
+> warning anywhere - that failure mode is real, but it was already fully
+> prevented by tier 1, which runs before concatenation ever happens and
+> probes every file individually. Tier 2 added a new false-rejection risk
+> without covering any gap tier 1 left open. **What actually shipped:**
+> Task 1 (trimmed to just the `make_header_garbage_mp3` fixture — the
+> mid-file-corruption fixture was removed along with tier 2) and Task 5
+> (start_job()'s clearer error message) only. Tasks 2–4, 6 below are kept
+> as the historical record of what was built and why it came back out —
+> not a description of the current codebase.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A corrupt MP3 source file must fail the job clearly, naming the

@@ -354,6 +354,28 @@ guards against a bug (or a future change to the aligner) writing chapter
 metadata past the end of the file, which would otherwise corrupt the
 M4B's chapter atom - it's no longer the primary correction mechanism.
 
+**A corrupt source file** (e.g. a truncated or otherwise unreadable MP3)
+is caught by `start_job()`'s existing per-file duration probe
+(`ffutil.get_duration_sec`), which already runs right after
+`detect.detect()` and before the metadata search - every source file's
+header has to be probed there anyway, to compute the book's total
+duration for the review step (see "Job lifecycle" above). A file ffprobe
+can't parse at all raises there, failing the job before any API call, UI
+review time, or transcode work is spent on a book that was never going to
+convert; the failure message names the corruption explicitly rather than
+surfacing a raw ffprobe stderr dump. An earlier version of this fix added
+a second, stricter check - a full decode pass right before transcoding,
+meant to catch corruption inside an otherwise-valid-looking file that the
+header probe can't see - but real-world testing found it caused more harm
+than it prevented: concatenating a file with a harmless, fully-recoverable
+mid-stream decode hiccup through the actual production transcode command
+produced a correct, undamaged book (verified directly - correct audio,
+correctly positioned, at every timestamp checked), while the stricter
+check would have rejected that same book outright, since it aborts on the
+first decode error regardless of whether the real transcode can recover
+from it. It was reverted; the existing header-only check above is what
+ships.
+
 **Metadata search** goes through Audible's own unauthenticated catalog
 API, not audnexus — audnexus turned out to have no free-text search of
 its own (only ASIN lookup) when this was checked against its live API
