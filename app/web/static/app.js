@@ -140,12 +140,17 @@
       stack = document.createElement("div");
       stack.id = "toastStack";
       stack.className = "toast-stack";
+      stack.setAttribute("role", "status");
+      stack.setAttribute("aria-live", "polite");
       document.body.appendChild(stack);
     }
     return stack;
   }
   function showErrorToast(message) {
     var stack = getToastStack();
+    while (stack.childElementCount >= 3) {
+      stack.firstElementChild.remove();
+    }
     var toast = document.createElement("div");
     toast.className = "toast";
     var eyebrow = document.createElement("span");
@@ -166,25 +171,31 @@
   }
 
   function post(url, formData) {
-    return fetch(url, { method: "POST", body: formData || new FormData() }).then(function (res) {
-      if (!res.ok) {
-        // FastAPI's HTTPException responses are {"detail": "..."} - surface
-        // that real message (e.g. the search route's "Enter a title or
-        // author to search.") rather than a generic failure string. Falls
-        // back to a generic message if the body isn't JSON or has no
-        // usable detail (e.g. a plain 500 with an HTML error page).
-        return res
-          .json()
-          .catch(function () {
-            return null;
-          })
-          .then(function (body) {
-            var message = (body && body.detail) || "Something went wrong - try again.";
-            throw new Error(message);
-          });
-      }
-      return res;
-    });
+    return fetch(url, { method: "POST", body: formData || new FormData() })
+      .catch(function () {
+        throw new Error("Couldn't reach the server - check that it's running.");
+      })
+      .then(function (res) {
+        if (!res.ok) {
+          // FastAPI's HTTPException responses are {"detail": "..."} - surface
+          // that real message (e.g. the search route's "Enter a title or
+          // author to search.") rather than a generic failure string. Falls
+          // back to a generic message if the body isn't JSON, has no usable
+          // detail (e.g. a plain 500 with an HTML error page), or detail
+          // isn't a plain string (e.g. FastAPI's 422 validation errors
+          // return an array of error objects, not text).
+          return res
+            .json()
+            .catch(function () {
+              return null;
+            })
+            .then(function (body) {
+              var detail = body && typeof body.detail === "string" ? body.detail : null;
+              throw new Error(detail || "Something went wrong - try again.");
+            });
+        }
+        return res;
+      });
   }
 
   function getHtml(url) {
@@ -359,8 +370,8 @@
           .then(function () {
             return refreshBoard(currentPanelId).then(syncKnownGroups);
           })
-          .catch(function (e) {
-            showErrorToast(e.message);
+          .catch(function (err) {
+            showErrorToast(err.message);
           });
       });
     });
@@ -470,8 +481,8 @@
             var firstCard = next.querySelector(".candidate");
             if (firstCard) firstCard.click();
           })
-          .catch(function (e) {
-            showErrorToast(e.message);
+          .catch(function (err) {
+            showErrorToast(err.message);
           })
           .finally(function () {
             if (submitBtn) submitBtn.disabled = false;
@@ -490,8 +501,8 @@
           .then(function () {
             return refreshBoard(jobId).then(syncKnownGroups);
           })
-          .catch(function (e) {
-            showErrorToast(e.message);
+          .catch(function (err) {
+            showErrorToast(err.message);
           })
           .finally(function () {
             if (submitBtn) submitBtn.disabled = false;
