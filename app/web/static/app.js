@@ -36,6 +36,7 @@
   var detail = document.getElementById("detail");
   var currentPanelId = null;
   var knownGroups = {}; // job id -> render group, used to detect structural changes while polling
+  var consecutivePollFailures = 0; // reset on any successful poll; drives the offline pill state below
 
   // Mirrors _NEEDS_INPUT_STATUSES / _CONVERTING_STATUSES in app/web/routes.py.
   var NEEDS_INPUT_STATUSES = [
@@ -130,6 +131,24 @@
       else if (NEEDS_INPUT_STATUSES.indexOf(j.status) !== -1) needsInputCount++;
     });
     pillText.textContent = convertingCount + " converting/queued · " + needsInputCount + " need input";
+  }
+
+  // ---- stale-connection indicator ----
+  // 3 consecutive poll failures (~7.5s at the 2.5s poll interval) before
+  // showing anything - long enough that a single dropped request doesn't
+  // flicker the pill, short enough to notice a real outage quickly.
+  var POLL_FAILURE_THRESHOLD = 3;
+  function setConnectionOffline(offline) {
+    var pill = document.getElementById("livePill");
+    var pillText = document.getElementById("livePillText");
+    if (!pill || !pillText) return;
+    pill.classList.toggle("offline", offline);
+    if (offline) {
+      pillText.textContent = "Can't reach server - retrying...";
+    }
+    // Recovery text is NOT set here - the next successful poll's
+    // updateLivePill() call unconditionally overwrites pillText with the
+    // real counts, which is what "recovered" should show anyway.
   }
 
   // ---- error toasts (network/action failures) ----
@@ -542,6 +561,9 @@
   function pollStatus() {
     getJson("/api/status")
       .then(function (jobs) {
+        consecutivePollFailures = 0;
+        setConnectionOffline(false);
+
         var byId = {};
         jobs.forEach(function (j) {
           byId[j.id] = j;
@@ -593,7 +615,12 @@
         }
       })
       .catch(function () {
-        /* transient network hiccup - just try again next tick */
+        // transient network hiccup - tolerate a couple of misses before
+        // telling the user anything; see POLL_FAILURE_THRESHOLD above.
+        consecutivePollFailures++;
+        if (consecutivePollFailures >= POLL_FAILURE_THRESHOLD) {
+          setConnectionOffline(true);
+        }
       });
   }
 

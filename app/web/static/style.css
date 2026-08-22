@@ -80,14 +80,18 @@ a{color:inherit;}
   color:var(--muted); background:var(--surface); border:1px solid var(--hairline-strong);
   padding:0.45rem 0.85rem; border-radius:999px;
 }
-.live-dot{width:7px; height:7px; border-radius:50%; background:var(--amber); box-shadow:0 0 0 3px var(--amber-wash); flex:none;}
+.live-dot{
+  width:7px; height:7px; border-radius:50%; background:var(--amber);
+  box-shadow:0 0 0 3px var(--pulse-wash, var(--amber-wash)); flex:none;
+}
 @media (prefers-reduced-motion: no-preference){
   .live-dot{animation:pulse 2.2s ease-in-out infinite;}
 }
 @keyframes pulse{
-  0%,100%{opacity:1; box-shadow:0 0 0 3px var(--amber-wash);}
+  0%,100%{opacity:1; box-shadow:0 0 0 3px var(--pulse-wash, var(--amber-wash));}
   50%{opacity:0.55; box-shadow:0 0 0 6px transparent;}
 }
+.live-pill.offline .live-dot{background:var(--rust); --pulse-wash:var(--rust-wash);}
 
 /* ---------- Layout: rail + detail ---------- */
 .layout{display:grid; grid-template-columns:300px 1fr; gap:1.5rem; align-items:start;}
