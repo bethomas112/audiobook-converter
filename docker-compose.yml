@@ -19,9 +19,9 @@
 # CONFIG_DIR is the one exception: it's a named Docker volume
 # (config_data, defined at the bottom of this file), not a bind mount
 # like the other four. A bind-mounted CONFIG_DIR can produce a SQLite
-# "disk I/O error" that doesn't self-heal - see README.md's "Known issue"
-# note under Configuration for why, and for the backup command you'll
-# want instead of just `cp`-ing a folder.
+# "disk I/O error" that doesn't self-heal - see README.md's "Why
+# CONFIG_DIR is a named Docker volume" note under Configuration for why,
+# and for the backup command you'll want instead of just `cp`-ing a folder.
 services:
   audiobook-converter:
     build: .

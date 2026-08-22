@@ -14,7 +14,7 @@ services:
       - ./data/archive:/data/archive
       - ./data/output:/data/output
       # CONFIG_DIR is a named volume, not a bind mount - see README.md's
-      # "SQLite WAL disk I/O error" note for why.
+      # "Why CONFIG_DIR is a named Docker volume" note for why.
       - config_data:/data/config
 
 volumes:
