@@ -222,6 +222,13 @@ optional section, e.g. `{title}[  \[{series} {series_index}\]]` renders as
 `Blackflame  [Cradle 3]`, matching a library organized like
 `Blackflame (2019) [Cradle 3].m4b`.
 
+If the rendered filename already exists at the destination — re-converting
+a book you already have, or two sources matching the same
+author/title/year — the finished file is written alongside it as `Title
+(2).m4b`, `Title (3).m4b`, and so on rather than overwriting whatever's
+already there. The job's "Done" panel in the web UI always shows the
+actual final path, disambiguated suffix included.
+
 ## Tag mapping
 
 MP4 has no dedicated "series" atom, so this follows the convention used

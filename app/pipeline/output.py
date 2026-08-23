@@ -84,13 +84,36 @@ def build_library_destination(meta: dict) -> tuple[Path, Path]:
     return folder_path, file_path
 
 
+def _disambiguate(dest_file: Path) -> Path:
+    """If dest_file already exists, returns the first "(2)", "(3)", ...
+    variant (appended before the extension) that doesn't. shutil.move()
+    silently overwrites an existing destination with no error and no
+    trace of what was there before - a real risk once OUTPUT_DIR points
+    at an already-populated library rather than a throwaway staging
+    folder, e.g. re-converting a book already owned, or two different
+    sources matching the same author/title/year.
+    """
+    if not dest_file.exists():
+        return dest_file
+    n = 2
+    while True:
+        candidate = dest_file.with_name(f"{dest_file.stem} ({n}){dest_file.suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def place_output(work_m4b: Path, meta: dict) -> Path:
     """Move the finished M4B (and, in library mode, any sidecar files) to
-    its final destination. Returns the final .m4b path.
+    its final destination. Returns the final .m4b path - which may differ
+    from the template-rendered name if that path was already taken (see
+    _disambiguate()); callers should use the returned path, not re-derive
+    it from meta.
     """
     if config.OUTPUT_MODE == "library":
         folder_path, dest_file = build_library_destination(meta)
         folder_path.mkdir(parents=True, exist_ok=True)
+        dest_file = _disambiguate(dest_file)
         shutil.move(str(work_m4b), str(dest_file))
 
         if config.WRITE_SIDECAR_FILES:
@@ -100,6 +123,7 @@ def place_output(work_m4b: Path, meta: dict) -> Path:
 
     dest_file = build_standalone_destination(meta)
     dest_file.parent.mkdir(parents=True, exist_ok=True)
+    dest_file = _disambiguate(dest_file)
     shutil.move(str(work_m4b), str(dest_file))
     return dest_file
 

@@ -10,6 +10,7 @@ import pytest
 from app.pipeline.output import (
     build_library_destination,
     build_standalone_destination,
+    place_output,
     render_template,
     sanitize_path_component,
 )
@@ -172,3 +173,99 @@ def test_build_library_destination_sanitizes_each_path_segment(monkeypatch):
     )
     assert "A: B" not in str(folder)
     assert folder == Path("/data/output/A B/2020 - Weird Title")
+
+
+def test_place_output_library_mode_disambiguates_filename_on_collision(tmp_path, monkeypatch):
+    """Guards against place_output() silently overwriting an unrelated
+    existing file - a real risk now that OUTPUT_DIR can point directly at
+    an already-populated library rather than a throwaway staging folder
+    (e.g. re-converting a book you already own, or two sources matching
+    the same author/title/year). The job's destination_path is exactly
+    this return value (app/queue.py), so a disambiguated name here is what
+    shows up in the "Done" queue's path box too.
+    """
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_MODE", "library")
+    monkeypatch.setattr(config, "LIBRARY_FOLDER_TEMPLATE", "{author}/{year} - {title}")
+    monkeypatch.setattr(config, "LIBRARY_FILENAME_TEMPLATE", "{title} ({year})")
+    monkeypatch.setattr(config, "WRITE_SIDECAR_FILES", False)
+
+    meta = {"author": "Andy Weir", "title": "Project Hail Mary", "year": "2021", "series": "", "series_index": ""}
+
+    existing_folder = tmp_path / "Andy Weir" / "2021 - Project Hail Mary"
+    existing_folder.mkdir(parents=True)
+    existing_file = existing_folder / "Project Hail Mary (2021).m4b"
+    existing_file.write_bytes(b"already here")
+
+    work_m4b = tmp_path / "work.m4b"
+    work_m4b.write_bytes(b"newly converted")
+
+    dest = place_output(work_m4b, meta)
+
+    assert dest == existing_folder / "Project Hail Mary (2021) (2).m4b"
+    assert existing_file.read_bytes() == b"already here"
+    assert dest.read_bytes() == b"newly converted"
+    assert not work_m4b.exists()
+
+
+def test_place_output_library_mode_keeps_incrementing_past_first_collision(tmp_path, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_MODE", "library")
+    monkeypatch.setattr(config, "LIBRARY_FOLDER_TEMPLATE", "{author}/{year} - {title}")
+    monkeypatch.setattr(config, "LIBRARY_FILENAME_TEMPLATE", "{title} ({year})")
+    monkeypatch.setattr(config, "WRITE_SIDECAR_FILES", False)
+
+    meta = {"author": "Andy Weir", "title": "Project Hail Mary", "year": "2021", "series": "", "series_index": ""}
+
+    folder = tmp_path / "Andy Weir" / "2021 - Project Hail Mary"
+    folder.mkdir(parents=True)
+    (folder / "Project Hail Mary (2021).m4b").write_bytes(b"1")
+    (folder / "Project Hail Mary (2021) (2).m4b").write_bytes(b"2")
+
+    work_m4b = tmp_path / "work.m4b"
+    work_m4b.write_bytes(b"3")
+
+    dest = place_output(work_m4b, meta)
+
+    assert dest == folder / "Project Hail Mary (2021) (3).m4b"
+
+
+def test_place_output_standalone_mode_disambiguates_filename_on_collision(tmp_path, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
+    monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{author} - {title}")
+
+    meta = {"author": "Andy Weir", "title": "Project Hail Mary", "series": "", "series_index": ""}
+
+    existing = tmp_path / "Andy Weir - Project Hail Mary.m4b"
+    existing.write_bytes(b"already here")
+
+    work_m4b = tmp_path / "work.m4b"
+    work_m4b.write_bytes(b"newly converted")
+
+    dest = place_output(work_m4b, meta)
+
+    assert dest == tmp_path / "Andy Weir - Project Hail Mary (2).m4b"
+    assert existing.read_bytes() == b"already here"
+
+
+def test_place_output_no_collision_uses_plain_name(tmp_path, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
+    monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{author} - {title}")
+
+    meta = {"author": "Andy Weir", "title": "Project Hail Mary", "series": "", "series_index": ""}
+    work_m4b = tmp_path / "work.m4b"
+    work_m4b.write_bytes(b"data")
+
+    dest = place_output(work_m4b, meta)
+
+    assert dest == tmp_path / "Andy Weir - Project Hail Mary.m4b"
