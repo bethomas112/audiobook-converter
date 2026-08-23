@@ -1,17 +1,32 @@
 """Chapter resolution, in priority order:
 
-  1. Embedded chapters already present in an M4B input -> left untouched,
-     signalled here by returning None (caller must not modify chapters) -
-     UNLESS the source is missing the QuickTime-style chapter track Apple's
-     own apps (Books, Music, Podcasts, QuickTime) need to show real titles
-     instead of falling back to generic "1", "2", "3" numbering (see
-     ffutil.has_quicktime_chapter_track's docstring). In that case the same
-     chapter data is returned for re-injection instead of None, so the
-     caller rewrites it through ffutil.inject_chapters_ffmetadata() - which
-     always writes both formats - picking up the missing track without
-     altering the chapter times/titles the source already had.
+  1. Embedded chapters already present in an M4B input. When an asin is
+     available, these are first verified against audnexus's reference data
+     (_embedded_matches_audnexus): if positions match, the source's own
+     (verified-correct) timing is kept, with any placeholder titles ("001",
+     "002"...) replaced by audnexus's real ones (_retitle_from_audnexus) -
+     a real-world M4B was found whose embedded chapters matched audnexus to
+     within 40ms across 80 chapters but never had real titles populated.
+     Genuine/custom titles are left untouched even on a position match. If
+     no asin is available to check against, or embedded chapters don't
+     verify, this falls back to the original passthrough contract: left
+     untouched, signalled here by returning None (caller must not modify
+     chapters) - UNLESS the source is missing the QuickTime-style chapter
+     track Apple's own apps (Books, Music, Podcasts, QuickTime) need to
+     show real titles instead of falling back to generic "1", "2", "3"
+     numbering (see ffutil.has_quicktime_chapter_track's docstring). In
+     that case the same chapter data is returned for re-injection instead
+     of None, so the caller rewrites it through
+     ffutil.inject_chapters_ffmetadata() - which always writes both
+     formats - picking up the missing track without altering the chapter
+     times/titles the source already had. When embedded chapters don't
+     verify against audnexus AND an asin is available, they're distrusted
+     entirely and priority 2's realignment pipeline runs instead - but its
+     result is only used if it clears a minimum confidently-placed
+     fraction (_EMBEDDED_FALLBACK_MIN_RESOLVED_FRACTION); otherwise the
+     source's own original embedded chapters are kept as the safer choice.
   2. Official audnexus chapter timestamps for the matched title, if the
-     input didn't already have its own chapters - REALIGNED against this
+     input didn't already have its own (verified) chapters - REALIGNED against this
      particular rip's actual audio before being used (see
      _align_audnexus_chapters). audnexus's timestamps are anchored to
      Audible's own official release, which commonly has different
@@ -64,6 +79,33 @@ _ALIGNER_WINDOW_FLOOR_SEC = 15.0
 # investigation this design responds to) from genuine ~2s name markers.
 _MIN_CHAPTER_SEC = 5.0
 
+# Priority 1's own verification step: an M4B's embedded chapters are only
+# trusted as-is when each one's start time sits within this many seconds of
+# audnexus's corresponding chapter (paired by index, requiring equal
+# counts) - see _embedded_matches_audnexus. Real-world observation (The
+# Butcher's Masquerade) showed embedded/audnexus deltas under 40ms across
+# an entire 80-chapter book when the embedded data genuinely came from the
+# same source audio, so 5s is a generous margin that still catches a real
+# structural mismatch (different edition, wrong chapter track) rather than
+# ordinary rounding.
+_EMBEDDED_MATCH_TOLERANCE_SEC = 5.0
+
+# When embedded chapters are distrusted (didn't verify against audnexus)
+# and the audnexus/achew realignment pipeline runs instead, its result is
+# only used if at least this fraction of chapters got a confident
+# placement (achew-confident or verified file-boundary) - otherwise a
+# heavily folded/interpolated result is judged less reliable than the
+# source's own original embedded chapters, and those are used instead.
+_EMBEDDED_FALLBACK_MIN_RESOLVED_FRACTION = 0.7
+
+# A generic/placeholder chapter title - just the chapter's own sequential
+# number, optionally zero-padded ("001", "002"...) - some M4B-authoring
+# tools write instead of a real title. Blank titles count too. Only a title
+# matching this narrow shape gets replaced by the audnexus retitle path in
+# resolve_chapters(): a book with genuine (possibly custom) titles that
+# happens to position-match audnexus keeps its own titles untouched.
+_PLACEHOLDER_TITLE_RE = re.compile(r"^0*\d+$")
+
 # Step 4: cheap prefilter before ever probing per-file durations - only
 # attempt file-boundary anchoring when the source's file count is close to
 # the *cleaned* (post-short-fold) reference chapter count. Comparing
@@ -93,19 +135,54 @@ def resolve_chapters(
     log = log or (lambda _line: None)
 
     if source_type == "m4b_single" and has_embedded_chapters:
-        if ffutil.has_quicktime_chapter_track(output_path):
-            return None
-        # The source's chapters are readable (ffprobe/chpl) but the file is
-        # missing the QuickTime-style track Apple's apps need for real
-        # titles. Re-inject the same data through our own chapter-writing
-        # path (still a -codec copy remux, no audio re-encode) to add it.
-        return ffutil.get_embedded_chapters(output_path)
+        embedded_chapters = ffutil.get_embedded_chapters(output_path)
+        has_quicktime_track = ffutil.has_quicktime_chapter_track(output_path)
+        audnexus_chapters = metadata.get_chapters(asin) if asin else []
+
+        if audnexus_chapters and _embedded_matches_audnexus(embedded_chapters, audnexus_chapters):
+            log(
+                f"Source's embedded chapter positions matched audnexus reference data for all "
+                f"{len(embedded_chapters)} chapter(s) (within {_EMBEDDED_MATCH_TOLERANCE_SEC:.0f}s) - "
+                f"kept the source's own verified timing, replacing any placeholder titles with "
+                f"audnexus's real ones."
+            )
+            return _retitle_from_audnexus(embedded_chapters, audnexus_chapters)
+
+        if not audnexus_chapters:
+            if has_quicktime_track:
+                return None
+            # The source's chapters are readable (ffprobe/chpl) but the file
+            # is missing the QuickTime-style track Apple's apps need for
+            # real titles. Re-inject the same data through our own
+            # chapter-writing path (still a -codec copy remux, no audio
+            # re-encode) to add it.
+            return embedded_chapters
+
+        log(
+            "Source's embedded chapter data did not match audnexus reference data closely enough to "
+            "trust (chapter count or timing mismatch) - distrusting it and trying audnexus/achew "
+            "realignment instead."
+        )
+        duration_sec = ffutil.get_duration_sec(output_path)
+        aligned_chapters, resolved_fraction = _align_audnexus_chapters(
+            audnexus_chapters, output_path, duration_sec, source_type, source_audio_files, log
+        )
+        if resolved_fraction < _EMBEDDED_FALLBACK_MIN_RESOLVED_FRACTION:
+            log(
+                f"Audnexus/achew realignment only confidently placed {resolved_fraction * 100:.0f}% of "
+                f"chapters (below the {_EMBEDDED_FALLBACK_MIN_RESOLVED_FRACTION * 100:.0f}% floor) - "
+                f"falling back to the source's own original embedded chapters instead."
+            )
+            if has_quicktime_track:
+                return None
+            return embedded_chapters
+        return _clamp_to_duration(aligned_chapters, duration_sec)
 
     if asin:
         audnexus_chapters = metadata.get_chapters(asin)
         if audnexus_chapters:
             duration_sec = ffutil.get_duration_sec(output_path)
-            aligned_chapters = _align_audnexus_chapters(
+            aligned_chapters, _resolved_fraction = _align_audnexus_chapters(
                 audnexus_chapters, output_path, duration_sec, source_type, source_audio_files, log
             )
             return _clamp_to_duration(aligned_chapters, duration_sec)
@@ -116,6 +193,39 @@ def resolve_chapters(
     return _chapters_from_silence_detection(output_path)
 
 
+def _is_placeholder_title(title: str) -> bool:
+    return not title.strip() or bool(_PLACEHOLDER_TITLE_RE.match(title.strip()))
+
+
+def _embedded_matches_audnexus(
+    embedded_chapters: list[dict],
+    audnexus_chapters: list[dict],
+    tolerance_sec: float = _EMBEDDED_MATCH_TOLERANCE_SEC,
+) -> bool:
+    """Do this M4B's own embedded chapters verify against audnexus's
+    reference data closely enough to trust the embedded positions as-is?
+    Requires equal chapter counts (a count mismatch is itself evidence of a
+    real structural difference) and every paired chapter's start time
+    within tolerance_sec, matched by index."""
+    if len(embedded_chapters) != len(audnexus_chapters):
+        return False
+    return all(
+        abs(e["start_sec"] - a["start_sec"]) <= tolerance_sec
+        for e, a in zip(embedded_chapters, audnexus_chapters)
+    )
+
+
+def _retitle_from_audnexus(embedded_chapters: list[dict], audnexus_chapters: list[dict]) -> list[dict]:
+    """Keep each embedded chapter's own (verified-correct) start/end, but
+    replace its title with audnexus's paired title wherever the embedded
+    title itself looks like a generic placeholder - a real/custom embedded
+    title is left untouched even though its position matched."""
+    return [
+        {**e, "title": a["title"]} if _is_placeholder_title(e["title"]) else e
+        for e, a in zip(embedded_chapters, audnexus_chapters)
+    ]
+
+
 def _align_audnexus_chapters(
     chapters: list[dict],
     output_path: Path,
@@ -123,7 +233,7 @@ def _align_audnexus_chapters(
     source_type: str,
     source_audio_files: list[Path],
     log,
-) -> list[dict]:
+) -> tuple[list[dict], float]:
     """The refined audnexus-chapter pipeline: fold out structural markers,
     realign what's left against real detected audio, then only ever write a
     marker for a chapter with a genuinely *verified* placement - folding
@@ -228,7 +338,10 @@ def _align_audnexus_chapters(
         aligned.append({"start_sec": starts[i], "end_sec": end, "title": p["title"]})
 
     _log_alignment_summary(log, chapters, cleaned, short_folded, results, file_boundaries, placements, source_type)
-    return aligned
+
+    resolved_count = sum(1 for p in placements if p["source"] is not None)
+    resolved_fraction = resolved_count / len(placements) if placements else 0.0
+    return aligned, resolved_fraction
 
 
 def _fold_short_chapters(chapters: list[dict], min_sec: float = _MIN_CHAPTER_SEC) -> tuple[list[dict], int]:

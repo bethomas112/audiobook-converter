@@ -51,10 +51,21 @@ how to run it.
      at the source's own bitrate (re-encoding higher can't add back
      quality that isn't there).
 5. **Chapters**, resolved in priority order:
-   1. Embedded chapters already in an M4B input — left as-is (see the
-      QuickTime-chapter-track repair note above for the one exception).
+   1. Embedded chapters already in an M4B input — verified against the
+      matched title's official chapter data first, when available: if the
+      embedded chapter positions line up closely with the official ones,
+      the source's own (verified-correct) timing is kept, and any
+      placeholder titles ("001", "002"...) are swapped for the official
+      real titles — a genuine/custom embedded title is left alone even on
+      a position match. Otherwise it falls back to being left as-is (see
+      the QuickTime-chapter-track repair note above for the one exception)
+      — unless official chapter data disagrees with the embedded chapters
+      enough to distrust them, in which case they're set aside and
+      priority 2's realignment runs instead, with the embedded chapters
+      kept as a fallback if that realignment doesn't turn out confident
+      enough either.
    2. Official chapter data for the matched title, if the input didn't
-      already have its own chapters — **realigned to this rip's actual
+      already have its own (verified) chapters — **realigned to this rip's actual
       audio** before being written, rather than trusted verbatim. The
       official timestamps are for Audible's own release, which commonly
       has different front/back matter than a given rip, so each chapter

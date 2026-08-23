@@ -20,63 +20,297 @@ from app.pipeline.chapters import (
     _classify_placements,
     _clamp_to_duration,
     _cluster_shift_check,
+    _embedded_matches_audnexus,
     _fold_short_chapters,
     _fold_unresolved_placements,
+    _is_placeholder_title,
     _parse_silence_gaps,
     _verify_file_boundaries,
     resolve_chapters,
 )
 
 
-def test_priority_1_embedded_chapters_wins_even_with_asin(monkeypatch):
-    """An M4B that already has its own chapters, AND already carries the
-    QuickTime-style chapter track Apple's apps need for real titles, must
-    be left alone - the caller signal for "don't touch chapters" is a None
-    return, even when an audnexus match (asin) is available.
+def test_priority_1_embedded_positions_match_audnexus_placeholder_titles_replaced(monkeypatch):
+    """The real-world bug this design responds to (The Butcher's Masquerade):
+    an M4B's own embedded chapters can have perfectly correct positions
+    (verified here against audnexus) but generic placeholder titles ("001",
+    "002"...) instead of real chapter names. When positions verify, the
+    source's own (already-correct) timing is kept, but a placeholder title
+    is replaced with audnexus's real one. Whether the file already carries
+    the QuickTime chapter track is irrelevant to this path - a match always
+    produces a rewrite.
     """
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [
+            {"start_sec": 0.0, "end_sec": 100.0, "title": "001"},
+            {"start_sec": 100.0, "end_sec": 200.0, "title": "002"},
+        ],
+    )
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
     called = {"audnexus": False}
 
     def fake_get_chapters(asin):
         called["audnexus"] = True
-        return [{"start_sec": 0, "end_sec": 10, "title": "Ch1"}]
+        return [
+            {"start_sec": 0.0, "end_sec": 100.0, "title": "Opening Credits"},
+            {"start_sec": 100.0, "end_sec": 200.0, "title": "Chapter 1"},
+        ]
 
     monkeypatch.setattr(chapters_mod.metadata, "get_chapters", fake_get_chapters)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
+    )
+    assert result == [
+        {"start_sec": 0.0, "end_sec": 100.0, "title": "Opening Credits"},
+        {"start_sec": 100.0, "end_sec": 200.0, "title": "Chapter 1"},
+    ]
+    assert called["audnexus"] is True
+
+
+def test_priority_1_embedded_positions_match_but_custom_titles_kept(monkeypatch):
+    """The other half of the same check: when the embedded title is NOT a
+    generic placeholder (a real, possibly custom title), a position match
+    against audnexus must not clobber it - only a title that itself looks
+    like a placeholder gets replaced. This also confirms the source's own
+    chapter *data* still wins over audnexus's whenever both actually agree,
+    even though audnexus is now consulted unconditionally (unlike the old
+    "never call audnexus at all" contract this replaces).
+    """
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [{"start_sec": 0.0, "end_sec": 10.0, "title": "Real Chapter Title"}],
+    )
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: False)
+    called = {"audnexus": False}
+
+    def fake_get_chapters(asin):
+        called["audnexus"] = True
+        return [{"start_sec": 0.0, "end_sec": 10.0, "title": "WRONG - should not appear"}]
+
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", fake_get_chapters)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
+    )
+    assert result == [{"start_sec": 0.0, "end_sec": 10.0, "title": "Real Chapter Title"}]
+    assert called["audnexus"] is True
+
+
+def test_priority_1_no_asin_leaves_embedded_chapters_with_quicktime_track_untouched(monkeypatch):
+    """With no asin at all, there is nothing to check embedded chapters
+    against - falls back to the original passthrough contract: a file that
+    already carries the QuickTime-style chapter track is left alone
+    entirely (None signals "don't touch chapters")."""
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [{"start_sec": 0.0, "end_sec": 10.0, "title": "001"}],
+    )
     monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin=None
+    )
+    assert result is None
+
+
+def test_priority_1_no_asin_and_missing_quicktime_track_gets_repaired(monkeypatch):
+    """With no asin to check against, and the file missing the QuickTime
+    chapter track, the source's own existing chapter data is returned as-is
+    for re-injection (format repair only) - the original contract."""
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [{"start_sec": 0.0, "end_sec": 10.0, "title": "Real Chapter Title"}],
+    )
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: False)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin=None
+    )
+    assert result == [{"start_sec": 0.0, "end_sec": 10.0, "title": "Real Chapter Title"}]
+
+
+def test_priority_1_embedded_mismatch_falls_through_to_achew_alignment(monkeypatch):
+    """When the embedded chapter data doesn't verify against audnexus (here,
+    a chapter count mismatch - 2 embedded vs. 3 audnexus), the source's
+    chapters are distrusted entirely and the normal audnexus/achew
+    realignment pipeline runs instead, exactly as it would for a source with
+    no embedded chapters at all. A confident (all is_guess False) achew
+    result clears the resolved-fraction floor, so its output is used
+    verbatim rather than falling back to the (distrusted) embedded data.
+    """
+    monkeypatch.setattr(
+        chapters_mod.ffutil, "get_embedded_chapters",
+        lambda p: [
+            {"start_sec": 0.0, "end_sec": 50.0, "title": "001"},
+            {"start_sec": 50.0, "end_sec": 150.0, "title": "002"},
+        ],
+    )
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
+
+    audnexus_chapters = [
+        {"start_sec": 0.0, "end_sec": 50.0, "title": "Chapter 1"},
+        {"start_sec": 50.0, "end_sec": 100.0, "title": "Chapter 2"},
+        {"start_sec": 100.0, "end_sec": 150.0, "title": "Chapter 3"},
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
+
+    class _FakeAligner:
+        def __init__(self, *a, **k):
+            pass
+
+        def align(self, ref_chapters, detected_cues, total_duration_ref, total_duration_actual, scanned_regions=None):
+            return (
+                [
+                    {"title": "Chapter 1", "timestamp": 0.0, "confidence": 1.0, "is_guess": False, "matched_silence": 0.0},
+                    {"title": "Chapter 2", "timestamp": 48.0, "confidence": 0.85, "is_guess": False, "matched_silence": 2.0},
+                    {"title": "Chapter 3", "timestamp": 100.0, "confidence": 0.85, "is_guess": False, "matched_silence": 2.0},
+                ],
+                {"scale": 1.0, "offset": 0.0, "expansion_needed": False},
+            )
+
+    monkeypatch.setattr(chapters_mod, "ChapterAligner", _FakeAligner)
+
+    result = resolve_chapters(
+        "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
+    )
+    assert [c["title"] for c in result] == ["Chapter 1", "Chapter 2", "Chapter 3"]
+    assert [c["start_sec"] for c in result] == [0.0, 48.0, 100.0]
+
+
+def test_priority_1_embedded_mismatch_and_poor_achew_result_falls_back_to_embedded(monkeypatch):
+    """When embedded chapters are distrusted (mismatch) AND the achew
+    realignment that follows does no better than a 70% floor of confidently-
+    placed chapters (2 of 5 = 40% here), the realigned result is too
+    unreliable to ship - falls back to the source's own original embedded
+    chapters, same as the no-asin-at-all passthrough contract (None when the
+    file already has the QuickTime track).
+    """
+    embedded = [
+        {"start_sec": 0.0, "end_sec": 20.0, "title": "001"},
+        {"start_sec": 20.0, "end_sec": 40.0, "title": "002"},
+        {"start_sec": 40.0, "end_sec": 60.0, "title": "003"},
+        {"start_sec": 60.0, "end_sec": 80.0, "title": "004"},
+        {"start_sec": 80.0, "end_sec": 100.0, "title": "005"},
+    ]
+    monkeypatch.setattr(chapters_mod.ffutil, "get_embedded_chapters", lambda p: embedded)
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
+
+    # Audnexus disagrees on count (5 embedded vs. 4 audnexus) - a real
+    # structural mismatch, not just a timing nudge.
+    audnexus_chapters = [
+        {"start_sec": i * 25.0, "end_sec": (i + 1) * 25.0, "title": f"Chapter {i + 1}"} for i in range(4)
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
+
+    class _FakeAligner:
+        def __init__(self, *a, **k):
+            pass
+
+        def align(self, ref_chapters, detected_cues, total_duration_ref, total_duration_actual, scanned_regions=None):
+            # Only chapters 1 and 2 confidently placed - 2 of 4 = 50%, below
+            # the 70% floor.
+            return (
+                [
+                    {"title": "Chapter 1", "timestamp": 0.0, "confidence": 1.0, "is_guess": False, "matched_silence": 0.0},
+                    {"title": "Chapter 2", "timestamp": 25.0, "confidence": 0.85, "is_guess": False, "matched_silence": 2.0},
+                    {"title": "Chapter 3", "timestamp": 60.0, "confidence": 0.25, "is_guess": True, "matched_silence": 0.0},
+                    {"title": "Chapter 4", "timestamp": 90.0, "confidence": 0.25, "is_guess": True, "matched_silence": 0.0},
+                ],
+                {"scale": 1.0, "offset": 0.0, "expansion_needed": False},
+            )
+
+    monkeypatch.setattr(chapters_mod, "ChapterAligner", _FakeAligner)
 
     result = resolve_chapters(
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
     )
     assert result is None
-    assert called["audnexus"] is False
 
 
-def test_priority_1_embedded_chapters_missing_quicktime_track_gets_repaired(monkeypatch):
-    """An M4B with its own chapters but missing the QuickTime-style chapter
-    track (e.g. written by an older/different tool that only wrote the
-    legacy Nero 'chpl' atom - the real gap this repair exists for) must
-    have its existing chapter data returned for re-injection, not silently
-    passed through broken. audnexus must still not be consulted - the
-    source's own chapter *data* still wins, only the atom *format* needs
-    fixing.
-    """
-    called = {"audnexus": False}
+def test_priority_1_embedded_mismatch_achew_resolved_fraction_meets_floor_is_used(monkeypatch):
+    """Boundary check: a resolved fraction of exactly 70% (7 of 10
+    confidently placed) must clear the floor and use the achew-realigned
+    result, not fall back to embedded - the floor is inclusive."""
+    embedded = [{"start_sec": float(i * 10), "end_sec": float((i + 1) * 10), "title": f"{i:03d}"} for i in range(9)]
+    monkeypatch.setattr(chapters_mod.ffutil, "get_embedded_chapters", lambda p: embedded)
+    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
 
-    def fake_get_chapters(asin):
-        called["audnexus"] = True
-        return [{"start_sec": 0, "end_sec": 10, "title": "WRONG - should not appear"}]
+    # 10 audnexus chapters vs. 9 embedded - count mismatch triggers distrust.
+    audnexus_chapters = [
+        {"start_sec": float(i * 10), "end_sec": float((i + 1) * 10), "title": f"Chapter {i + 1}"} for i in range(10)
+    ]
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
+    monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", fake_get_chapters)
-    monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: False)
-    monkeypatch.setattr(
-        chapters_mod.ffutil, "get_embedded_chapters",
-        lambda p: [{"start_sec": 0, "end_sec": 10, "title": "Real Chapter Title"}],
-    )
+    class _FakeAligner:
+        def __init__(self, *a, **k):
+            pass
+
+        def align(self, ref_chapters, detected_cues, total_duration_ref, total_duration_actual, scanned_regions=None):
+            results = []
+            for i, c in enumerate(audnexus_chapters):
+                confident = i < 7  # 7 of 10 = exactly 70%
+                results.append({
+                    "title": c["title"],
+                    "timestamp": c["start_sec"],
+                    "confidence": 1.0 if i == 0 else (0.85 if confident else 0.25),
+                    "is_guess": not confident,
+                    "matched_silence": 0.0,
+                })
+            return results, {"scale": 1.0, "offset": 0.0, "expansion_needed": False}
+
+    monkeypatch.setattr(chapters_mod, "ChapterAligner", _FakeAligner)
 
     result = resolve_chapters(
         "m4b_single", [Path("/x.m4b")], Path("/out.m4b"), has_embedded_chapters=True, asin="B123"
     )
-    assert result == [{"start_sec": 0, "end_sec": 10, "title": "Real Chapter Title"}]
-    assert called["audnexus"] is False
+    assert result is not None
+    # Chapters 1-6 are confident and untouched; chapters 8-10 (unconfident)
+    # fold onto chapter 7, the last resolved chapter, per the existing
+    # fold-onto-preceding-resolved-chapter behaviour.
+    assert [c["title"] for c in result] == [f"Chapter {i + 1}" for i in range(6)] + ["Chapter 7 – Chapter 10"]
+
+
+def test_is_placeholder_title_matches_generic_sequential_numbers():
+    assert _is_placeholder_title("001") is True
+    assert _is_placeholder_title("1") is True
+    assert _is_placeholder_title("42") is True
+    assert _is_placeholder_title("") is True
+    assert _is_placeholder_title("   ") is True
+
+
+def test_is_placeholder_title_does_not_match_real_titles():
+    assert _is_placeholder_title("Chapter 1") is False
+    assert _is_placeholder_title("Opening Credits") is False
+    assert _is_placeholder_title("Real Chapter Title") is False
+
+
+def test_embedded_matches_audnexus_requires_equal_count():
+    embedded = [{"start_sec": 0.0, "end_sec": 10.0, "title": "001"}]
+    audnexus = [
+        {"start_sec": 0.0, "end_sec": 5.0, "title": "A"},
+        {"start_sec": 5.0, "end_sec": 10.0, "title": "B"},
+    ]
+    assert _embedded_matches_audnexus(embedded, audnexus) is False
+
+
+def test_embedded_matches_audnexus_within_tolerance():
+    embedded = [{"start_sec": 100.0, "end_sec": 200.0, "title": "001"}]
+    audnexus = [{"start_sec": 104.9, "end_sec": 200.0, "title": "Chapter 1"}]
+    assert _embedded_matches_audnexus(embedded, audnexus) is True
+
+
+def test_embedded_matches_audnexus_rejects_beyond_tolerance():
+    embedded = [{"start_sec": 100.0, "end_sec": 200.0, "title": "001"}]
+    audnexus = [{"start_sec": 106.0, "end_sec": 200.0, "title": "Chapter 1"}]
+    assert _embedded_matches_audnexus(embedded, audnexus) is False
 
 
 def test_priority_2_audnexus_used_when_no_embedded_chapters(monkeypatch):

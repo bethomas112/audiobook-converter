@@ -166,23 +166,47 @@ archive.handle_source_cleanup()
 ```
 
 **Chapters** are resolved in priority order (`app/pipeline/chapters.py`):
-embedded chapters already in an M4B input are left untouched *if* the file
-already carries a QuickTime-style chapter track (`ffutil.
-has_quicktime_chapter_track`) alongside the legacy Nero `chpl` atom -
-otherwise the same chapter data is re-injected through
-`ffutil.inject_chapters_ffmetadata()` to add the missing track. This
-matters because Apple's own apps (Books, Music, Podcasts, QuickTime) need
-that QuickTime track specifically to show real chapter *titles*; lacking
-it, they still get the right chapter *count* but fall back to generic "1",
-"2", "3" numbering - a real, silent gap some other/older ffmpeg-based
-tooling can leave in a source .m4b, which `ffprobe`'s chapter list can't
-tell apart from a fully-correct file. Otherwise (no usable embedded
-chapters), audnexus's official chapter data for the matched title is used
-if available - **realigned against this rip's actual audio first**, see
-below; otherwise, for a multi-file MP3 source, each source file becomes
-one chapter; otherwise (a single undifferentiated stream with no better
-source) chapter breaks are inferred from silence via ffmpeg's
-`silencedetect` filter.
+when an M4B input already has embedded chapters and an asin match is
+available, the embedded positions are first checked against audnexus's
+reference data (`_embedded_matches_audnexus` - equal chapter count, every
+paired start time within `_EMBEDDED_MATCH_TOLERANCE_SEC`). A real-world
+book (The Butcher's Masquerade) was found whose embedded chapters matched
+audnexus to within 40ms across all 80 chapters but had never had real
+titles populated - just sequential placeholders ("001", "002"...). When
+positions verify, the source's own (verified-correct) timing is kept and
+any placeholder title is replaced with audnexus's real one
+(`_retitle_from_audnexus`, gated by `_is_placeholder_title` so a
+genuine/custom embedded title is never overwritten just because its
+position happened to match).
+
+If there's no asin to check against, or the embedded chapters don't
+verify against it, the fallback is the *original* passthrough contract:
+embedded chapters are left untouched *if* the file already carries a
+QuickTime-style chapter track (`ffutil.has_quicktime_chapter_track`)
+alongside the legacy Nero `chpl` atom - otherwise the same chapter data is
+re-injected through `ffutil.inject_chapters_ffmetadata()` to add the
+missing track. This matters because Apple's own apps (Books, Music,
+Podcasts, QuickTime) need that QuickTime track specifically to show real
+chapter *titles*; lacking it, they still get the right chapter *count*
+but fall back to generic "1", "2", "3" numbering - a real, silent gap some
+other/older ffmpeg-based tooling can leave in a source .m4b, which
+`ffprobe`'s chapter list can't tell apart from a fully-correct file.
+
+When embedded chapters exist but *don't* verify against an available
+asin's audnexus data (a real structural mismatch, not just rounding),
+they're distrusted entirely and priority 2's realignment runs instead -
+but only used if at least `_EMBEDDED_FALLBACK_MIN_RESOLVED_FRACTION`
+(70%) of chapters come back confidently placed; otherwise the realigned
+result is judged too unreliable and the source's own original embedded
+chapters are used after all (via the same QuickTime-track-aware
+passthrough/re-inject logic above).
+
+Otherwise (no usable embedded chapters at all), audnexus's official
+chapter data for the matched title is used if available - **realigned
+against this rip's actual audio first**, see below; otherwise, for a
+multi-file MP3 source, each source file becomes one chapter; otherwise (a
+single undifferentiated stream with no better source) chapter breaks are
+inferred from silence via ffmpeg's `silencedetect` filter.
 
 **Priority-2 (audnexus) chapter realignment.** audnexus's chapter
 timestamps are anchored to Audible's own official release, which commonly
