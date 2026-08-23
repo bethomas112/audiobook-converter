@@ -236,15 +236,22 @@ by most self-hosted audiobook tooling:
 
 | Field | MP4 atom |
 |---|---|
-| Title | `©nam` |
+| Title | `©nam`, `©alb` (name atom + album atom — see note below) |
 | Author | `©ART`, `aART` |
 | Narrator | `©wrt` (composer atom — the de facto convention) |
-| Series | `©alb` (album atom; falls back to title if there's no series) |
 | Series index | `trkn` (track number) |
 | Year | `©day` |
 | Genre | `©gen` |
 | Description | `desc`, `©cmt` |
 | Cover art | `covr` |
+
+Album (`©alb`) is always the book's own title, deliberately never the
+series name — a media server that groups by the embedded Album tag
+(Plex's music-style scanner included) would otherwise collapse an entire
+series into one entry instead of showing each book separately. Series
+membership is still there via the track number and via `{series}`/
+`{series_index}` in the naming templates below — it just isn't encoded
+in Album.
 
 If your media server/app expects a different mapping, it's all in one
 place: `app/pipeline/tag.py`.

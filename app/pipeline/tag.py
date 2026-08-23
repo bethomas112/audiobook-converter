@@ -7,15 +7,26 @@ most self-hosted audiobook tooling (m4b-tool, AAXtoMP3, and others):
 
 | Field         | MP4 atom         | Notes                                   |
 |---------------|------------------|------------------------------------------|
-| Title         | \\xa9nam         |                                          |
+| Title         | \\xa9nam, \\xa9alb | name atom + album atom (see below)    |
 | Author        | \\xa9ART, aART   | artist + album artist                   |
 | Narrator      | \\xa9wrt         | composer atom, the de facto convention  |
-| Series        | \\xa9alb         | album atom; falls back to title if none |
 | Series index  | trkn             | track number atom, (index, 0)           |
 | Year          | \\xa9day         |                                          |
 | Genre         | \\xa9gen         | defaults to "Audiobook"                 |
 | Description   | desc, \\xa9cmt   | native podcast-description atom + comment |
 | Cover art     | covr             |                                          |
+
+Album (\\xa9alb) is deliberately always the book's own title, never the
+series name, even though there's no dedicated series atom to fall back
+on otherwise. A media server that groups by the embedded Album tag -
+Plex's music-style scanner included - collapses every file sharing one
+Album value into a single entry; setting it to the series name (this
+module's original approach) made an entire series look like one book
+with multiple tracks. Confirmed against Brady's existing library, which
+already uses title-as-album per book. Series membership still survives
+via the track number (trkn) and via {series}/{series_index} in the
+folder/filename templates (see app/pipeline/output.py) - it just isn't
+what the Album tag encodes.
 
 If a deployer's media server/agent expects a different mapping, adjust
 this module — it's the single place tags are written.
@@ -33,7 +44,6 @@ def apply_tags(m4b_path: Path, meta: dict):
     title = meta.get("title", "")
     author = meta.get("author", "")
     narrator = meta.get("narrator", "")
-    series = meta.get("series", "")
     series_index = meta.get("series_index", "")
     year = meta.get("year", "")
     genre = meta.get("genre") or "Audiobook"
@@ -46,7 +56,7 @@ def apply_tags(m4b_path: Path, meta: dict):
         audio["aART"] = [author]
     if narrator:
         audio["\xa9wrt"] = [narrator]
-    audio["\xa9alb"] = [series or title]
+    audio["\xa9alb"] = [title]
     if series_index:
         try:
             audio["trkn"] = [(int(float(series_index)), 0)]

@@ -1,9 +1,17 @@
 """Integration tests for app/pipeline/tag.py against a real M4B file,
 verifying the tag mapping table documented in the README:
 
-  Title -> nam, Author -> ART/aART, Narrator -> wrt, Series -> alb
-  (falls back to title), Series index -> trkn, Year -> day, Genre -> gen
-  (defaults "Audiobook"), Description -> desc/cmt, Cover -> covr
+  Title -> nam and alb, Author -> ART/aART, Narrator -> wrt,
+  Series index -> trkn, Year -> day, Genre -> gen (defaults "Audiobook"),
+  Description -> desc/cmt, Cover -> covr
+
+Album (alb) is deliberately always the book's own title, never the series
+name - confirmed by reading the tags on Brady's existing, working library
+(e.g. Robin Hobb's Farseer Trilogy books each carry their own title as
+Album). Media servers that group by embedded Album tag (Plex's music-style
+scanner included) collapse every book sharing one Album value into a
+single entry, which is exactly what happened when this used to be
+`series or title`.
 """
 import respx
 import httpx
@@ -37,7 +45,7 @@ def test_apply_tags_writes_full_metadata(tmp_path):
     assert audio["\xa9ART"] == ["Brandon Sanderson"]
     assert audio["aART"] == ["Brandon Sanderson"]
     assert audio["\xa9wrt"] == ["Michael Kramer"]
-    assert audio["\xa9alb"] == ["Mistborn"]
+    assert audio["\xa9alb"] == ["The Final Empire"]
     assert audio["trkn"] == [(1, 0)]
     assert audio["\xa9day"] == ["2006"]
     assert audio["\xa9gen"] == ["Fantasy"]
@@ -45,11 +53,29 @@ def test_apply_tags_writes_full_metadata(tmp_path):
     assert audio["\xa9cmt"] == ["A boy and a plan."]
 
 
-def test_apply_tags_series_falls_back_to_title_when_no_series(tmp_path):
+def test_apply_tags_album_is_title_when_no_series(tmp_path):
     f = make_m4b(tmp_path / "book.m4b", duration_sec=1.0)
     apply_tags(f, {"title": "Standalone Book", "series": "", "series_index": ""})
     audio = _read_tags(f)
     assert audio["\xa9alb"] == ["Standalone Book"]
+
+
+def test_apply_tags_album_is_title_not_series_when_series_present(tmp_path):
+    """Regression guard: Album must stay the book's own title even for a
+    book in a series, so each book in a series is a distinct entry in a
+    media server that groups by the embedded Album tag - see the module
+    docstring above for why.
+    """
+    f = make_m4b(tmp_path / "book.m4b", duration_sec=1.0)
+    apply_tags(f, {"title": "Dungeon Crawler Carl", "series": "Dungeon Crawler Carl", "series_index": "1"})
+    audio = _read_tags(f)
+    assert audio["\xa9alb"] == ["Dungeon Crawler Carl"]
+
+    f2 = make_m4b(tmp_path / "book2.m4b", duration_sec=1.0)
+    apply_tags(f2, {"title": "Carl's Doomsday Scenario", "series": "Dungeon Crawler Carl", "series_index": "2"})
+    audio2 = _read_tags(f2)
+    assert audio2["\xa9alb"] == ["Carl's Doomsday Scenario"]
+    assert audio2["\xa9alb"] != audio["\xa9alb"]
 
 
 def test_apply_tags_genre_defaults_to_audiobook_when_unset(tmp_path):
