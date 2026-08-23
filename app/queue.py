@@ -2,12 +2,21 @@
 that decides which job Huey actually runs and when.
 
 Two Huey tasks do the real work - start_job (detection + metadata search)
-and process_job (conversion through to archiving) - but nothing is ever
-handed to Huey the instant it becomes eligible. Confirming a job's
-metadata just marks it "ready" with a queue_order; dispatch_next() is the
-only thing that ever promotes a ready job to Huey, and only when nothing
-else is currently processing. That indirection is what makes the rest of
-this module simple:
+and process_job (conversion through to archiving) - and they run on two
+separate Huey instances (lookup_huey / huey below), each with its own
+single-worker consumer process (see run.sh). They share the same
+huey.db file (Huey namespaces rows by queue name, so one file safely
+holds both queues) but never share a worker thread. That split exists
+because start_job is normally sub-second while process_job can run for
+tens of minutes; a lone shared worker would leave a freshly-dropped
+book's metadata lookup stuck behind an unrelated in-progress conversion
+for however long that conversion takes.
+
+Nothing is ever handed to Huey the instant it becomes eligible, though -
+confirming a job's metadata just marks it "ready" with a queue_order;
+dispatch_next() is the only thing that ever promotes a ready job to
+Huey, and only when nothing else is currently processing. That
+indirection is what makes the rest of this module simple:
 
   - Reordering the queue (reorder_queue) is a plain update to queue_order
     on rows Huey has never seen, not a queue-system operation.
@@ -36,9 +45,10 @@ config.ensure_dirs()
 init_db()
 
 huey = SqliteHuey("audiobook-converter", filename=str(config.CONFIG_DIR / "huey.db"))
+lookup_huey = SqliteHuey("audiobook-converter-lookup", filename=str(config.CONFIG_DIR / "huey.db"))
 
 
-@huey.task()
+@lookup_huey.task()
 def start_job(job_id: int):
     """Runs format detection and a metadata search for a newly-confirmed job."""
     job = Job.get_by_id(job_id)

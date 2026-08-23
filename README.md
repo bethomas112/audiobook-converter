@@ -259,12 +259,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The app is one process that also needs a Huey consumer running
-alongside it:
+The app is one process that also needs two Huey consumers running
+alongside it - one for conversion, one for detection/metadata lookup
+(see ARCHITECTURE.md's "Processes" section for why they're separate):
 
 ```bash
 uvicorn app.main:app --reload &
-python -m huey.bin.huey_consumer app.queue.huey -w 1
+python -m huey.bin.huey_consumer app.queue.huey -w 1 &
+python -m huey.bin.huey_consumer app.queue.lookup_huey -w 1
 ```
 
 Both need `ffmpeg`/`ffprobe` on `PATH` to actually convert anything —

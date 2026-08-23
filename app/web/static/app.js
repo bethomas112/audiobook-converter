@@ -544,8 +544,17 @@
         var jobId = btn.getAttribute("data-job-id");
         btn.disabled = true;
         post("/jobs/" + jobId + "/" + action)
-          .then(function () {
-            return refreshBoard(jobId).then(syncKnownGroups);
+          .then(function (res) {
+            return res.json();
+          })
+          .then(function (body) {
+            // "start" on a not-yet-claimed inbox entry (id "pending:<name>")
+            // replaces it with a brand-new numeric Job id, returned here as
+            // job_id - refreshBoard() must focus THAT id, not the stale
+            // pending one, or it can't find the item in the refreshed rail
+            // and falls back to whatever now sits first in the list.
+            var focusId = (body && body.job_id !== undefined && body.job_id !== null) ? body.job_id : jobId;
+            return refreshBoard(focusId).then(syncKnownGroups);
           })
           .catch(function (e) {
             showErrorToast(e.message);

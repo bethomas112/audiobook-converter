@@ -7,23 +7,34 @@ are, at a level no single file's own comments capture on their own.
 
 ## Processes
 
-The container runs exactly two OS processes (see `entrypoint.sh`):
+The container runs exactly three OS processes (see `entrypoint.sh`/`run.sh`):
 
 - **Web process** — `uvicorn app.main:app`. Serves the UI, and also runs
   the inbox watcher (`app/watcher.py`) as a background thread inside
   itself. See the docstring at the top of `app/main.py`.
-- **Worker process** — the Huey consumer, `huey_consumer app.queue.huey`.
-  Runs with a single worker thread (`-w 1`), so exactly one conversion
-  ever executes at a time. This is deliberate, not a limitation to work
-  around: a home server generally has one CPU/disk budget for encoding,
-  and running one job at a time is what makes accurate progress
-  reporting and clean cancellation tractable.
+- **Conversion worker** — the Huey consumer for `app.queue.huey`, running
+  `process_job`. Runs with a single worker thread (`-w 1`), so exactly
+  one conversion ever executes at a time. This is deliberate, not a
+  limitation to work around: a home server generally has one CPU/disk
+  budget for encoding, and running one job at a time is what makes
+  accurate progress reporting and clean cancellation tractable.
+- **Lookup worker** — a second, separate Huey consumer for
+  `app.queue.lookup_huey`, running `start_job` (format detection + the
+  metadata search). Kept off the conversion worker's queue entirely:
+  `start_job` normally finishes in under a second, but sharing a worker
+  with `process_job` would leave a freshly-dropped book's lookup stuck
+  behind an unrelated in-progress conversion for however long that
+  conversion takes, with no way to tell "queued behind a conversion"
+  apart from "stuck." The two Huey instances share one `huey.db` file
+  (Huey namespaces rows by queue name), but never a worker thread.
 
-**They never talk to each other directly.** There's no queue client, no
+**None of them talk to each other directly.** There's no queue client, no
 socket, no shared memory — the only channel between them is the SQLite
 database in `CONFIG_DIR`. The web process writes a job to "ready to
-convert"; the worker process notices, converts it, and writes the
-result back. Both sides just read and write rows.
+convert"; the conversion worker notices, converts it, and writes the
+result back. The lookup worker notices newly-queued jobs the same way and
+writes detection/candidate results back. All sides just read and write
+rows.
 
 This is why the database runs in **WAL mode** (`app/db.py`). SQLite's
 default rollback-journal mode lets a connection's reads lag behind
@@ -498,13 +509,13 @@ app/
 - **SQLite + peewee + Huey, not Postgres + Celery/Redis.** This is a
   single-user, one-job-at-a-time home server tool; adding a database
   server and a message broker would be pure overhead. WAL mode is the
-  one accommodation SQLite needed for the two-process design above.
+  one accommodation SQLite needed for the multi-process design above.
 - **No built-in HTTPS/auth beyond optional HTTP Basic.** Deliberately
   scoped to a trusted LAN (see `WEB_UI_AUTH` in README) rather than
   hardening for internet exposure.
-- **One Docker image, two processes via a shell entrypoint**, rather
-  than two separate containers/services. Simpler to deploy (one image,
-  one `docker compose up`) at the cost of both processes sharing
+- **One Docker image, three processes via a shell entrypoint**, rather
+  than separate containers/services. Simpler to deploy (one image, one
+  `docker compose up`) at the cost of all three processes sharing
   restart/logging as a unit — acceptable at this scale, and
-  `entrypoint.sh` is written so either process dying stops the
-  container instead of leaving a half-working one behind.
+  `entrypoint.sh`/`run.sh` are written so any one process dying stops
+  the container instead of leaving a half-working one behind.

@@ -74,14 +74,16 @@ def isolated_dirs(tmp_path, monkeypatch):
 
 @pytest.fixture
 def huey_immediate():
-    """Runs @huey.task()-decorated calls synchronously in-process instead of
-    enqueuing them for a separate consumer - lets integration tests exercise
-    the real start_job/process_job task bodies without a live Huey consumer
-    process. See app/queue.py for the tasks this affects.
+    """Runs @huey.task()/@lookup_huey.task()-decorated calls synchronously
+    in-process instead of enqueuing them for a separate consumer - lets
+    integration tests exercise the real start_job/process_job task bodies
+    without live Huey consumer processes. See app/queue.py for the tasks
+    this affects, and why there are two Huey instances to flip.
     """
-    from app.queue import huey
+    from app.queue import huey, lookup_huey
 
-    original = huey.immediate
+    originals = (huey.immediate, lookup_huey.immediate)
     huey.immediate = True
+    lookup_huey.immediate = True
     yield huey
-    huey.immediate = original
+    huey.immediate, lookup_huey.immediate = originals
