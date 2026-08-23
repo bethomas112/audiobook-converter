@@ -224,6 +224,12 @@ def inject_chapters_ffmetadata(m4b_path: Path, chapters: list[dict]):
                 "-i", str(m4b_path),
                 "-i", str(metadata_path),
                 "-map_metadata", "1",
+                # Chapters are a separate selection from -map_metadata,
+                # which only covers global tags - without this, ffmpeg
+                # defaults to keeping chapters from the FIRST input with
+                # any (m4b_path itself, whenever it already has its own),
+                # silently ignoring the metadata file's chapters entirely.
+                "-map_chapters", "1",
                 "-codec", "copy",
                 str(tmp_output),
             ]

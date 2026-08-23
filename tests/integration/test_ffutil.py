@@ -116,6 +116,37 @@ def test_inject_chapters_ffmetadata_writes_quicktime_chapter_track(tmp_path):
     assert has_quicktime_chapter_text_track(f) is True  # independent raw-box confirmation
 
 
+def test_inject_chapters_ffmetadata_replaces_preexisting_chapters(tmp_path):
+    """The real-world bug this test reproduces: inject_chapters_ffmetadata
+    was called with -map_metadata 1 but no -map_chapters, so ffmpeg quietly
+    kept chapters from input 0 (the file being written to) whenever it
+    already had any of its own - -map_metadata only selects global tags,
+    not chapters, which are a separate selection ffmpeg defaults to "first
+    input file with at least one chapter" for. Every prior caller either
+    started from a chapter-less file (a fresh MP3->M4B transcode) or
+    re-injected byte-identical data (the missing-QuickTime-track repair
+    case), so this never produced a visibly wrong result before. Discovered
+    via app/pipeline/chapters.py's new embedded-chapter retitle path, which
+    is the first caller to ask this function to overwrite a same-position
+    file's chapters with genuinely different title text.
+    """
+    original_chapters = [
+        {"start_sec": 0.0, "end_sec": 1.5, "title": "001"},
+        {"start_sec": 1.5, "end_sec": 3.0, "title": "002"},
+    ]
+    f = make_m4b(tmp_path / "book.m4b", duration_sec=3.0, chapters=original_chapters)
+    assert ffutil.get_embedded_chapters(f) == original_chapters  # fixture sanity check
+
+    new_chapters = [
+        {"start_sec": 0.0, "end_sec": 1.5, "title": "Opening Credits"},
+        {"start_sec": 1.5, "end_sec": 3.0, "title": "Chapter 1"},
+    ]
+    ffutil.inject_chapters_ffmetadata(f, new_chapters)
+
+    result = ffutil.get_embedded_chapters(f)
+    assert [c["title"] for c in result] == ["Opening Credits", "Chapter 1"]
+
+
 def test_has_quicktime_chapter_track_false_for_plain_file(tmp_path):
     f = make_m4b(tmp_path / "plain.m4b", duration_sec=2.0)
     assert ffutil.has_quicktime_chapter_track(f) is False

@@ -118,10 +118,19 @@ def test_mp3_multi_pipeline_library_output_with_source_boundary_chapters(isolate
     assert (isolated_dirs["archive"] / "Multi Book").exists()
 
 
-def test_m4b_passthrough_pipeline_preserves_embedded_chapters_untouched(isolated_dirs, monkeypatch, huey_immediate):
+def test_m4b_passthrough_pipeline_preserves_genuine_embedded_chapter_titles(isolated_dirs, monkeypatch, huey_immediate):
     """Planning doc, Section 2 step 7: an M4B source must pass through with
     zero audio re-encoding - only a metadata-only tag patch. Chapter
-    priority 1: embedded chapters already present are left exactly as-is.
+    priority 1: embedded chapters are verified against audnexus when an
+    asin is available (app/pipeline/chapters.py's
+    _embedded_matches_audnexus) - here the audnexus reference positions
+    match the embedded ones exactly, so the source's own (verified) timing
+    is kept; since neither embedded title looks like a generic placeholder
+    ("Prologue", "Chapter One" - not _is_placeholder_title), audnexus's
+    titles must not overwrite them either. The full pipeline still ends up
+    writing chapter data (an actual rewrite, not the old always-None
+    passthrough signal), so this also confirms the M4B-passthrough
+    no-re-encode guarantee holds even when a chapter rewrite happens.
     """
     from app.config import config
 
@@ -142,11 +151,16 @@ def test_m4b_passthrough_pipeline_preserves_embedded_chapters_untouched(isolated
         "asin": "B999", "title": "Chaptered Book", "author": "", "narrator": "",
         "series": "", "series_index": "", "year": "", "genre": "", "description": "", "cover_url": "",
     }
-    # Even though an asin is present, audnexus chapters must NOT override
-    # embedded chapters - priority 1 beats priority 2.
+    # Audnexus reference positions match the embedded ones (same 0.0/1.0
+    # boundaries) - the embedded timing is trusted, and since neither
+    # embedded title is a placeholder, audnexus's "WRONG"-titled data must
+    # not override them.
     job = _run_job_to_completion(
         monkeypatch, source, meta,
-        chapters_from_audnexus=[{"start_sec": 0, "end_sec": 2, "title": "WRONG - should not appear"}],
+        chapters_from_audnexus=[
+            {"start_sec": 0.0, "end_sec": 1.0, "title": "WRONG - should not appear"},
+            {"start_sec": 1.0, "end_sec": 2.0, "title": "WRONG - should not appear either"},
+        ],
     )
 
     assert job.status == Job.STATUS_DONE, job.log
