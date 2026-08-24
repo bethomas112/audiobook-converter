@@ -13,3 +13,6 @@ venv/
 .DS_Store
 *.egg-info/
 .worktrees/
+# Local planning/spec docs from Claude's superpowers workflow - reference
+# internal NAS paths and infra details, never meant to be public.
+docs/superpowers/
