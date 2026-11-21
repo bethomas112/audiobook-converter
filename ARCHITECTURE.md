@@ -418,6 +418,18 @@ during development, despite the original plan assuming it did. audnexus
 is still used for the harmonized chapter data once a match is confirmed.
 See the module docstring in `app/pipeline/metadata.py`.
 
+Audible's catalog is per-marketplace (a UK-only edition with its own
+narrator and ASIN simply isn't in the US catalog), so `metadata.search()`
+queries every region in `METADATA_REGIONS` in parallel. Results are
+interleaved by rank in region order, so each region's best match sits
+near the top, and the same recording listed in several stores (same
+title, ignoring quote style, plus same narrator and runtime) is kept once,
+from the first region. One region failing is skipped; only all failing
+raises. Every candidate carries a `region`, which goes through the confirm
+form into `selected_metadata` and on to `metadata.get_chapters(asin,
+region)` → audnexus's `?region=`. Jobs confirmed before regions existed
+have none and are treated as `us`.
+
 ## Live progress and cancellation
 
 `app/pipeline/ffutil.py:transcode_to_aac_m4b` runs ffmpeg with
@@ -451,7 +463,8 @@ the frontend's job is fetching small fragments and swapping them in.
   for the frontend to re-fetch after an action.
 - `POST /jobs/{id}/search` re-runs the metadata search with user-supplied
   title/author terms (for when the filename-derived guess was a bad
-  match) and returns the re-rendered `_candidates.html` fragment
+  match), across all configured regions or the single `region` picked in
+  the form's dropdown (an unknown region is a 400) and returns the re-rendered `_candidates.html` fragment
   directly, which `app.js` swaps in place — the one `POST /jobs/{id}/...`
   route that doesn't just return `{"ok": true}`. `_candidates.html` and
   `_chapters.html` are both factored out of `_panel.html` into their own

@@ -50,7 +50,7 @@ def test_priority_1_embedded_positions_match_audnexus_placeholder_titles_replace
     monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: True)
     called = {"audnexus": False}
 
-    def fake_get_chapters(asin):
+    def fake_get_chapters(asin, region=None):
         called["audnexus"] = True
         return [
             {"start_sec": 0.0, "end_sec": 100.0, "title": "Opening Credits"},
@@ -85,7 +85,7 @@ def test_priority_1_embedded_positions_match_but_custom_titles_kept(monkeypatch)
     monkeypatch.setattr(chapters_mod.ffutil, "has_quicktime_chapter_track", lambda p: False)
     called = {"audnexus": False}
 
-    def fake_get_chapters(asin):
+    def fake_get_chapters(asin, region=None):
         called["audnexus"] = True
         return [{"start_sec": 0.0, "end_sec": 10.0, "title": "WRONG - should not appear"}]
 
@@ -154,7 +154,7 @@ def test_priority_1_embedded_mismatch_falls_through_to_achew_alignment(monkeypat
         {"start_sec": 50.0, "end_sec": 100.0, "title": "Chapter 2"},
         {"start_sec": 100.0, "end_sec": 150.0, "title": "Chapter 3"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -204,7 +204,7 @@ def test_priority_1_embedded_mismatch_and_poor_achew_result_falls_back_to_embedd
     audnexus_chapters = [
         {"start_sec": i * 25.0, "end_sec": (i + 1) * 25.0, "title": f"Chapter {i + 1}"} for i in range(4)
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -245,7 +245,7 @@ def test_priority_1_embedded_mismatch_achew_resolved_fraction_meets_floor_is_use
     audnexus_chapters = [
         {"start_sec": float(i * 10), "end_sec": float((i + 1) * 10), "title": f"Chapter {i + 1}"} for i in range(10)
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -323,7 +323,7 @@ def test_priority_2_audnexus_used_when_no_embedded_chapters(monkeypatch):
     """
     monkeypatch.setattr(
         chapters_mod.metadata, "get_chapters",
-        lambda asin: [{"start_sec": 0, "end_sec": 100, "title": "Ch1"}],
+        lambda asin, region=None: [{"start_sec": 0, "end_sec": 100, "title": "Ch1"}],
     )
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 100.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
@@ -346,7 +346,7 @@ def test_priority_2_audnexus_chapters_realigned_to_detected_silence(monkeypatch)
         {"start_sec": 100.0, "end_sec": 200.0, "title": "Ch2"},
         {"start_sec": 200.0, "end_sec": 300.0, "title": "Ch3"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 300.0)
 
     # Real silences at 96s and 205s (a strong 3s gap each) - not at audnexus's
@@ -388,7 +388,7 @@ def test_priority_2_alignment_outcome_is_logged(monkeypatch):
         {"start_sec": 0.0, "end_sec": 100.0, "title": "Ch1"},
         {"start_sec": 100.0, "end_sec": 200.0, "title": "Ch2"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 200.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -429,7 +429,7 @@ def test_priority_2_alignment_output_is_forced_monotonic(monkeypatch):
         {"start_sec": 50.0, "end_sec": 100.0, "title": "Ch2"},
         {"start_sec": 100.0, "end_sec": 150.0, "title": "Ch3"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -476,7 +476,7 @@ def test_priority_2_unconfident_chapter_is_folded_not_kept(monkeypatch):
         {"start_sec": 50.0, "end_sec": 100.0, "title": "Chapter 2"},
         {"start_sec": 100.0, "end_sec": 150.0, "title": "Chapter 3"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -516,7 +516,7 @@ def test_priority_2_trailing_unconfident_chapter_folds_onto_previous(monkeypatch
         {"start_sec": 50.0, "end_sec": 100.0, "title": "Chapter 2"},
         {"start_sec": 100.0, "end_sec": 150.0, "title": "Epilogue"},
     ]
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: 150.0)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -563,7 +563,7 @@ def test_priority_2_long_run_of_consecutive_unconfident_chapters_folds_onto_prec
         for i in range(n_chapters)
     ]
     total_duration = n_chapters * length
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: audnexus_chapters)
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: audnexus_chapters)
     monkeypatch.setattr(chapters_mod.ffutil, "get_duration_sec", lambda p: total_duration)
     monkeypatch.setattr(chapters_mod.ffutil, "run_silencedetect", lambda *a, **k: "")
 
@@ -621,7 +621,7 @@ def test_priority_2_long_run_of_consecutive_unconfident_chapters_folds_onto_prec
 
 
 def test_priority_3_source_boundaries_when_audnexus_empty_and_multi_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin: [])
+    monkeypatch.setattr(chapters_mod.metadata, "get_chapters", lambda asin, region=None: [])
 
     files = []
     for i, dur in enumerate([30.0, 45.0]):

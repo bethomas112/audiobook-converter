@@ -85,12 +85,13 @@ def start_job(job_id: int):
         job.candidates = candidates
         job.append_log(f"Found {len(candidates)} metadata candidate(s).")
 
-        top_asin = candidates[0].get("asin") if candidates else None
+        top = candidates[0] if candidates else {}
+        top_asin = top.get("asin")
         if top_asin:
             # A preview only - shown during review so the user can see roughly
             # what will be written before confirming. Whichever candidate they
             # actually confirm is what process_job resolves chapters against.
-            job.chapters_preview = metadata.get_chapters(top_asin)
+            job.chapters_preview = metadata.get_chapters(top_asin, top.get("region"))
 
         if config.AUTO_CONFIRM_METADATA and candidates:
             job.touch_and_save()
@@ -295,7 +296,13 @@ def process_job(job_id: int):
 
         job.save_progress(92, stage="Resolving chapters")
         resolved_chapters = chapters.resolve_chapters(
-            job.source_type, audio_files, work_path, has_embedded, meta.get("asin"), log=job.append_log
+            job.source_type,
+            audio_files,
+            work_path,
+            has_embedded,
+            meta.get("asin"),
+            region=meta.get("region"),
+            log=job.append_log,
         )
         if resolved_chapters is not None:
             ffutil.inject_chapters_ffmetadata(work_path, resolved_chapters)

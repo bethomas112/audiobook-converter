@@ -8,14 +8,49 @@ audiobookshelf's Audible provider) to get a list of ASIN candidates with
 enough detail to populate the review UI, then audnexus is used as the
 canonical harmonized source (and for chapter data) once a candidate is
 confirmed.
+
+Audible's catalog is split by marketplace: the same book can have a
+completely different recording (different narrator, runtime and ASIN) in
+the UK store than in the US one, and a region's edition is only listed in
+that region's catalog. search() therefore queries every configured region
+(config.METADATA_REGIONS) in parallel and merges the results, tagging each
+candidate with the region it came from. audnexus likewise only returns a
+non-US edition's chapters when asked for that region, so get_chapters()
+takes the candidate's region too.
 """
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-AUDIBLE_SEARCH_URL = "https://api.audible.com/1.0/catalog/products"
+from app.config import config
+
+# Region code -> Audible catalog host suffix. The codes are the same ones
+# audnexus's `region` query parameter accepts.
+AUDIBLE_REGION_HOSTS = {
+    "us": "com",
+    "uk": "co.uk",
+    "ca": "ca",
+    "au": "com.au",
+    "de": "de",
+    "fr": "fr",
+    "it": "it",
+    "es": "es",
+    "in": "in",
+    "jp": "co.jp",
+}
+REGION_LABELS = {
+    "us": "US", "uk": "UK", "ca": "Canada", "au": "Australia", "de": "Germany",
+    "fr": "France", "it": "Italy", "es": "Spain", "in": "India", "jp": "Japan",
+}
+DEFAULT_REGION = "us"
+
 AUDNEXUS_BASE_URL = "https://api.audnex.us"
+
+
+def audible_search_url(region: str) -> str:
+    return f"https://api.audible.{AUDIBLE_REGION_HOSTS[region]}/1.0/catalog/products"
 
 RESPONSE_GROUPS = "contributors,product_desc,media,series"
 
@@ -57,7 +92,7 @@ def _pick_series(series_list: list[dict]) -> dict:
     return series_list[0]
 
 
-def _product_to_candidate(product: dict) -> dict:
+def _product_to_candidate(product: dict, region: str = DEFAULT_REGION) -> dict:
     series = _pick_series(product.get("series") or [])
     description = product.get("merchandising_summary") or product.get("publisher_summary") or ""
     return {
@@ -72,7 +107,7 @@ def _product_to_candidate(product: dict) -> dict:
         "cover_url": _extract_cover_url(product),
         "genre": "",
         # Official runtime in minutes, straight from Audible's catalog
-        # (confirmed via a live query against AUDIBLE_SEARCH_URL: the field
+        # (confirmed via a live query against the Audible catalog: the field
         # is `runtime_length_min`, an int). Surfaced in the review UI next
         # to the source's actual probed duration so a mismatched edition
         # (e.g. an abridged audiobook matched against an unabridged source)
@@ -80,13 +115,50 @@ def _product_to_candidate(product: dict) -> dict:
         # conversion. None (not "") when Audible didn't report one, since
         # this is numeric rather than display text.
         "runtime_minutes": product.get("runtime_length_min"),
+        # Which Audible marketplace this edition came from. Carried through
+        # to the confirmed metadata so chapter lookup asks audnexus for the
+        # same region's data (a UK-only ASIN is a 404 for region=us).
+        "region": region,
     }
 
 
-def search(title_guess: str, author_guess: str = "", limit: int = 8) -> list[dict]:
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
+
+
+def _edition_key(candidate: dict) -> tuple:
+    """Same recording listed in several stores (different ASINs per store,
+    and titles that can differ only in curly vs straight quotes)."""
+    title = candidate.get("title", "").translate(_QUOTES).casefold().strip()
+    narrator = candidate.get("narrator", "").casefold().strip()
+    return (title, narrator, candidate.get("runtime_minutes"))
+
+
+def _search_region(region: str, params: dict) -> list[dict]:
+    resp = httpx.get(audible_search_url(region), params=params, timeout=15)
+    resp.raise_for_status()
+    return [_product_to_candidate(p, region) for p in resp.json().get("products", [])]
+
+
+def search(
+    title_guess: str,
+    author_guess: str = "",
+    limit: int = 8,
+    regions: list[str] | None = None,
+) -> list[dict]:
+    """Search every region in `regions` (default config.METADATA_REGIONS) and
+    merge: results are interleaved by rank in region order, so each region's
+    best match sits near the top, then exact duplicate editions are dropped
+    (keeping the earliest region). A region that fails is skipped; only all
+    of them failing is an error.
+    """
     keywords = " ".join(part for part in (title_guess, author_guess) if part).strip()
     if not keywords:
         raise MetadataError("Cannot search metadata with an empty title guess.")
+
+    regions = list(regions or config.METADATA_REGIONS)
+    unknown = [r for r in regions if r not in AUDIBLE_REGION_HOSTS]
+    if unknown:
+        raise MetadataError(f"Unknown metadata region(s): {', '.join(unknown)}")
 
     params = {
         "keywords": keywords,
@@ -94,14 +166,29 @@ def search(title_guess: str, author_guess: str = "", limit: int = 8) -> list[dic
         "products_sort_by": "Relevance",
         "response_groups": RESPONSE_GROUPS,
     }
-    try:
-        resp = httpx.get(AUDIBLE_SEARCH_URL, params=params, timeout=15)
-        resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise MetadataError(f"Audible search request failed: {e}") from e
 
-    products = resp.json().get("products", [])
-    return [_product_to_candidate(p) for p in products]
+    per_region: list[list[dict]] = []
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(regions)) as pool:
+        futures = [(r, pool.submit(_search_region, r, params)) for r in regions]
+        for region, future in futures:
+            try:
+                per_region.append(future.result())
+            except httpx.HTTPError as e:
+                errors.append(f"{region}: {e}")
+    if errors and not per_region:
+        raise MetadataError(f"Audible search request failed: {'; '.join(errors)}")
+
+    merged: list[dict] = []
+    seen: set[tuple] = set()
+    for rank in range(max((len(r) for r in per_region), default=0)):
+        for results in per_region:
+            if rank < len(results):
+                key = _edition_key(results[rank])
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(results[rank])
+    return merged
 
 
 def fetch_cover_bytes(cover_url: str) -> bytes | None:
@@ -115,10 +202,18 @@ def fetch_cover_bytes(cover_url: str) -> bytes | None:
         return None
 
 
-def get_chapters(asin: str) -> list[dict]:
-    """Return [{start_sec, end_sec, title}, ...] from audnexus, or [] if unavailable."""
+def get_chapters(asin: str, region: str | None = DEFAULT_REGION) -> list[dict]:
+    """Return [{start_sec, end_sec, title}, ...] from audnexus, or [] if unavailable.
+
+    `region` must be the region the ASIN came from; jobs confirmed before
+    region support existed carry none and are treated as US.
+    """
     try:
-        resp = httpx.get(f"{AUDNEXUS_BASE_URL}/books/{asin}/chapters", timeout=15)
+        resp = httpx.get(
+            f"{AUDNEXUS_BASE_URL}/books/{asin}/chapters",
+            params={"region": region or DEFAULT_REGION},
+            timeout=15,
+        )
         if resp.status_code == 404:
             return []
         resp.raise_for_status()

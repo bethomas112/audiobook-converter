@@ -26,7 +26,7 @@ from tests.helpers import make_tone_mp3, make_tone_silence_pattern_mp3
 
 def _run_job_to_completion(monkeypatch, source_path, selected_metadata, chapters_from_audnexus):
     monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [selected_metadata])
-    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: chapters_from_audnexus)
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: chapters_from_audnexus)
     monkeypatch.setattr(metadata_mod, "fetch_cover_bytes", lambda url: None)
 
     job = Job.create(source_path=str(source_path))

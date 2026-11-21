@@ -23,6 +23,11 @@ def _int_or_none(value: str) -> int | None:
     return int(value)
 
 
+def _regions(value: str) -> list[str]:
+    regions = [r.strip().lower() for r in value.split(",") if r.strip()]
+    return regions or ["us"]
+
+
 class Config:
     def __init__(self):
         # Resolved to absolute paths: watchdog reports absolute event paths,
@@ -58,6 +63,7 @@ class Config:
         self.MIN_BITRATE_KBPS = int(os.environ.get("MIN_BITRATE_KBPS", "128"))
 
         self.METADATA_SOURCE = os.environ.get("METADATA_SOURCE", "audnexus")
+        self.METADATA_REGIONS = _regions(os.environ.get("METADATA_REGIONS", "us,uk"))
 
         self.SILENCE_THRESHOLD_DB = os.environ.get("SILENCE_THRESHOLD_DB", "-30dB")
         self.SILENCE_MIN_DURATION_SEC = float(os.environ.get("SILENCE_MIN_DURATION_SEC", "1.5"))

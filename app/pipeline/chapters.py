@@ -131,13 +131,14 @@ def resolve_chapters(
     has_embedded_chapters: bool,
     asin: str | None,
     log=None,
+    region: str | None = None,
 ) -> list[dict] | None:
     log = log or (lambda _line: None)
 
     if source_type == "m4b_single" and has_embedded_chapters:
         embedded_chapters = ffutil.get_embedded_chapters(output_path)
         has_quicktime_track = ffutil.has_quicktime_chapter_track(output_path)
-        audnexus_chapters = metadata.get_chapters(asin) if asin else []
+        audnexus_chapters = metadata.get_chapters(asin, region) if asin else []
 
         if audnexus_chapters and _embedded_matches_audnexus(embedded_chapters, audnexus_chapters):
             log(
@@ -179,7 +180,7 @@ def resolve_chapters(
         return _clamp_to_duration(aligned_chapters, duration_sec)
 
     if asin:
-        audnexus_chapters = metadata.get_chapters(asin)
+        audnexus_chapters = metadata.get_chapters(asin, region)
         if audnexus_chapters:
             duration_sec = ffutil.get_duration_sec(output_path)
             aligned_chapters, _resolved_fraction = _align_audnexus_chapters(

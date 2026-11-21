@@ -422,7 +422,7 @@
     // "None of these" row below and a real candidate pick always write the
     // exact same set of fields - no field left holding a stale value from a
     // previously-selected candidate.
-    var fields = ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin"];
+    var fields = ["title", "author", "narrator", "series", "series_index", "year", "genre", "cover_url", "description", "asin", "region"];
     var titleGuess = candidatesEl.getAttribute("data-title-guess") || "";
     var authorGuess = candidatesEl.getAttribute("data-author-guess") || "";
     var cards = candidatesEl.querySelectorAll(".candidate");

@@ -27,7 +27,7 @@ from tests.helpers import (
 
 def _run_job_to_completion(monkeypatch, source_path, selected_metadata, candidates=None, chapters_from_audnexus=None):
     monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: candidates or [selected_metadata])
-    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: chapters_from_audnexus or [])
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: chapters_from_audnexus or [])
     monkeypatch.setattr(metadata_mod, "fetch_cover_bytes", lambda url: b"\xff\xd8fakejpeg" if url else None)
 
     job = Job.create(source_path=str(source_path))
@@ -325,7 +325,7 @@ def test_cancellation_mid_conversion_removes_partial_output_and_marks_cancelled(
     monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
     monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{title}")
     monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [])
-    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: [])
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: [])
 
     source = isolated_dirs["inbox"] / "Cancel Me.mp3"
     make_tone_mp3(source, duration_sec=5.0)
@@ -365,7 +365,7 @@ def test_detection_computes_total_source_duration(isolated_dirs, monkeypatch, hu
     from app.pipeline import metadata as metadata_mod
 
     monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [])
-    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: [])
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: [])
 
     source = isolated_dirs["inbox"] / "Multi Duration Book"
     source.mkdir()
@@ -426,3 +426,41 @@ def test_totally_invalid_mp3_fails_fast_during_detection_with_clear_message(
     assert job.status == Job.STATUS_FAILED, job.log
     assert "corrupt" in job.error_message.lower()
     assert not search_calls  # never got as far as the metadata API call
+
+
+def test_candidate_region_reaches_audnexus_for_preview_and_conversion(isolated_dirs, monkeypatch, huey_immediate):
+    """A UK-only edition's chapters are only served by audnexus for
+    region=uk, so both the review-step preview (top candidate) and the
+    conversion-time lookup (confirmed metadata) must pass the region on."""
+    from app.config import config
+
+    monkeypatch.setattr(config, "OUTPUT_MODE", "standalone")
+    monkeypatch.setattr(config, "STANDALONE_FILENAME_TEMPLATE", "{title}")
+
+    source = isolated_dirs["inbox"] / "Region Book.m4b"
+    make_m4b_with_silence_gap(source, segments=[("tone", 8.0), ("silence", 2.0), ("tone", 10.0)])
+
+    calls = []
+
+    def fake_get_chapters(asin, region=None):
+        calls.append((asin, region))
+        return [
+            {"start_sec": 0.0, "end_sec": 8.0, "title": "UK Ch1"},
+            {"start_sec": 8.0, "end_sec": 20.0, "title": "UK Ch2"},
+        ]
+
+    meta = {
+        "asin": "UK1", "region": "uk", "title": "Region Book", "author": "", "narrator": "",
+        "series": "", "series_index": "", "year": "", "genre": "", "description": "", "cover_url": "",
+    }
+    monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [meta])
+    monkeypatch.setattr(metadata_mod, "get_chapters", fake_get_chapters)
+    monkeypatch.setattr(metadata_mod, "fetch_cover_bytes", lambda url: None)
+
+    job = Job.create(source_path=str(source))
+    queue_mod.start_job(job.id)
+    queue_mod.confirm_metadata(job.id, meta)
+    job = Job.get_by_id(job.id)
+
+    assert job.status == Job.STATUS_DONE, job.log
+    assert calls and all(c == ("UK1", "uk") for c in calls), calls

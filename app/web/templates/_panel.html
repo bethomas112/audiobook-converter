@@ -49,6 +49,13 @@
       <form data-search-form data-job-id="{{ job.id }}" class="search-form">
         <input class="search-field" name="title" placeholder="Title" value="{{ job.title_guess or '' }}">
         <input class="search-field" name="author" placeholder="Author" value="{{ job.author_guess or '' }}">
+        {% set regions = configured_regions() %}
+        <select class="search-field search-region" name="region" aria-label="Audible region">
+          <option value="">All regions ({{ regions|map('upper')|join(', ') }})</option>
+          {% for code, label in region_labels.items() %}
+          <option value="{{ code }}">{{ label }} only</option>
+          {% endfor %}
+        </select>
         <button type="submit" class="btn btn-ghost">Search</button>
       </form>
 
@@ -73,6 +80,7 @@
           <input type="hidden" name="cover_url" value="{{ c0.cover_url or '' }}">
           <input type="hidden" name="description" value="{{ c0.description or '' }}">
           <input type="hidden" name="asin" value="{{ c0.asin or '' }}">
+          <input type="hidden" name="region" value="{{ c0.region or '' }}">
         </div>
 
         {% if job.chapters_preview %}

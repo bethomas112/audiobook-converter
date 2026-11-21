@@ -300,6 +300,8 @@ a{color:inherit;}
 .cand-info{flex:1; min-width:0;}
 .cand-title{font-size:0.88rem; font-weight:600;}
 .cand-sub{font-size:0.76rem; color:var(--muted);}
+.cand-region{display:inline-block; font-family:var(--font-mono); font-size:0.62rem; letter-spacing:0.06em; color:var(--amber-bright); border:1px solid var(--hairline-strong); border-radius:3px; padding:0 0.3rem; margin-right:0.4rem; vertical-align:1px;}
+.search-region{flex:none; width:auto; cursor:pointer;}
 .cand-radio{flex:none; width:18px; height:18px; border-radius:50%; border:2px solid var(--muted-dim); position:relative;}
 .candidate.selected .cand-radio{border-color:var(--amber);}
 .candidate.selected .cand-radio::after{content:""; position:absolute; inset:3px; border-radius:50%; background:var(--amber);}

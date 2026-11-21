@@ -139,6 +139,11 @@ def _chapter_timestamp(start_sec) -> str:
 
 templates.env.filters["chapter_timestamp"] = _chapter_timestamp
 
+# For the review step's region dropdown. A callable, not a value, so it
+# always reflects the live config.
+templates.env.globals["configured_regions"] = lambda: config.METADATA_REGIONS
+templates.env.globals["region_labels"] = metadata.REGION_LABELS
+
 
 def require_auth(credentials: HTTPBasicCredentials = Depends(_basic_auth)):
     if config.WEB_UI_AUTH != "basic":
@@ -321,6 +326,7 @@ def confirm(
     cover_url: str = Form(""),
     description: str = Form(""),
     asin: str = Form(""),
+    region: str = Form(""),
     _=Depends(require_auth),
 ):
     """Whatever's currently in the staged-metadata fields is what gets
@@ -333,6 +339,7 @@ def confirm(
 
     selected = {
         "asin": asin,
+        "region": region,
         "title": title,
         "author": author,
         "narrator": narrator,
@@ -353,6 +360,7 @@ def search_metadata(
     request: Request,
     title: str = Form(""),
     author: str = Form(""),
+    region: str = Form(""),
     _=Depends(require_auth),
 ):
     """Manual retry of the metadata search for the review step, for when
@@ -370,7 +378,12 @@ def search_metadata(
     if not title.strip() and not author.strip():
         raise HTTPException(status_code=400, detail="Enter a title or author to search.")
 
-    job.candidates = metadata.search(title, author)
+    # Blank region = every configured region (same as the automatic search);
+    # otherwise just the one region picked in the review form's dropdown.
+    try:
+        job.candidates = metadata.search(title, author, regions=[region] if region else None)
+    except metadata.MetadataError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     job.touch_and_save()
     return templates.TemplateResponse("_candidates.html", {"request": request, "job": job})
 

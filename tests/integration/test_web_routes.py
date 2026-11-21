@@ -331,7 +331,7 @@ def test_start_endpoint_transitions_to_queued_and_runs_detection(client, monkeyp
     from tests.helpers import make_tone_mp3
 
     monkeypatch.setattr(metadata_mod, "search", lambda *a, **k: [])
-    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin: [])
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: [])
 
     from app.config import config
     source = config.INBOX_DIR / "book.mp3"
@@ -624,3 +624,64 @@ def test_panel_fragment_for_pending_entry(client, isolated_dirs, monkeypatch):
         stop_event.set()
         observer.stop()
         observer.join(timeout=5)
+
+
+def test_confirm_endpoint_persists_region(client):
+    """The confirmed candidate's region must survive to selected_metadata:
+    process_job hands it to audnexus, which 404s a non-US ASIN otherwise."""
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    resp = client.post(
+        f"/jobs/{job.id}/confirm",
+        data={"title": "Fool's Assassin", "asin": "B016P8YESO", "region": "uk"},
+    )
+    assert resp.status_code == 200
+    assert Job.get_by_id(job.id).selected_metadata["region"] == "uk"
+
+
+def test_search_endpoint_single_region_and_all_regions(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    seen = []
+
+    def fake_search(title, author, regions=None, **kwargs):
+        seen.append(regions)
+        return [{"title": "T", "asin": "A1", "region": "uk", "narrator": "N"}]
+
+    monkeypatch.setattr(metadata_mod, "search", fake_search)
+
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "T", "region": "uk"})
+    assert resp.status_code == 200
+    client.post(f"/jobs/{job.id}/search", data={"title": "T", "region": ""})
+    assert seen == [["uk"], None]
+
+
+def test_search_endpoint_shows_region_tag_on_candidates(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    monkeypatch.setattr(
+        metadata_mod, "search",
+        lambda *a, **k: [{"title": "Fool's Assassin", "asin": "B016P8YESO", "region": "uk",
+                          "narrator": "Lee Maxwell-Simpson"}],
+    )
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "Fool's Assassin"})
+    assert 'class="cand-region"' in resp.text
+    assert ">UK<" in resp.text
+
+
+def test_search_endpoint_unknown_region_is_400(client):
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM)
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "T", "region": "zz"})
+    assert resp.status_code == 400
+
+
+def test_review_panel_offers_region_dropdown(client, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "METADATA_REGIONS", ["us", "uk"])
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, title_guess="T")
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert resp.status_code == 200, resp.text
+    assert 'name="region"' in resp.text
+    assert "All regions (US, UK)" in resp.text

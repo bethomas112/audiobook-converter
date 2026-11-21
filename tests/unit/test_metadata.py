@@ -92,6 +92,7 @@ def test_product_to_candidate_maps_all_review_fields():
         "cover_url": "cover.jpg",
         "genre": "",
         "runtime_minutes": 1479,
+        "region": "us",
     }
 
 
@@ -116,15 +117,16 @@ def test_search_returns_candidates_from_audible():
             },
         )
     )
-    candidates = search("Book", "Author")
+    candidates = search("Book", "Author", regions=["us"])
     assert [c["asin"] for c in candidates] == ["B001", "B002"]
+    assert all(c["region"] == "us" for c in candidates)
 
 
 @respx.mock
 def test_search_raises_metadata_error_on_http_failure():
     respx.get(AUDIBLE_URL).mock(return_value=httpx.Response(500))
     with pytest.raises(MetadataError):
-        search("Book", "Author")
+        search("Book", "Author", regions=["us"])
 
 
 def test_search_raises_on_empty_keywords():
@@ -182,3 +184,120 @@ def test_fetch_cover_bytes_returns_none_for_empty_url():
 def test_fetch_cover_bytes_returns_none_on_http_error():
     respx.get("https://example.com/missing.jpg").mock(return_value=httpx.Response(404))
     assert fetch_cover_bytes("https://example.com/missing.jpg") is None
+
+
+# ---- multi-region search ----
+
+AUDIBLE_UK_URL = "https://api.audible.co.uk/1.0/catalog/products"
+AUDIBLE_AU_URL = "https://api.audible.com.au/1.0/catalog/products"
+
+
+def _products(*items):
+    return httpx.Response(
+        200,
+        json={
+            "products": [
+                {
+                    "asin": asin,
+                    "title": title,
+                    "narrators": [{"name": narrator}],
+                    "runtime_length_min": runtime,
+                }
+                for asin, title, narrator, runtime in items
+            ]
+        },
+    )
+
+
+@respx.mock
+def test_search_interleaves_results_from_each_region_by_rank():
+    """A region-exclusive edition (e.g. a UK-only narrator) must land near
+    the top of the merged list, not after every US result.
+    """
+    respx.get(AUDIBLE_URL).mock(
+        return_value=_products(("US1", "Book", "Elliot Hill", 1638), ("US2", "Other", "X", 10))
+    )
+    respx.get(AUDIBLE_UK_URL).mock(
+        return_value=_products(("UK1", "Book", "Lee Maxwell-Simpson", 1720), ("UK2", "Else", "Y", 20))
+    )
+    candidates = search("Book", "Author", regions=["us", "uk"])
+    assert [(c["asin"], c["region"]) for c in candidates] == [
+        ("US1", "us"), ("UK1", "uk"), ("US2", "us"), ("UK2", "uk"),
+    ]
+
+
+@respx.mock
+def test_search_dedupes_same_edition_across_regions_keeping_first_region():
+    """The same recording listed in several stores (different ASINs, same
+    title/narrator/runtime - title punctuation may differ, e.g. curly vs
+    straight apostrophe) shows up once, from the first configured region.
+    """
+    respx.get(AUDIBLE_UK_URL).mock(
+        return_value=_products(("UK1", "Fool\u2019s Assassin", "Lee Maxwell-Simpson", 1720))
+    )
+    respx.get(AUDIBLE_AU_URL).mock(
+        return_value=_products(("AU1", "Fool's Assassin", "Lee Maxwell-Simpson", 1720))
+    )
+    candidates = search("Fool's Assassin", "", regions=["uk", "au"])
+    assert [(c["asin"], c["region"]) for c in candidates] == [("UK1", "uk")]
+
+
+@respx.mock
+def test_search_keeps_working_when_one_region_fails():
+    respx.get(AUDIBLE_URL).mock(return_value=httpx.Response(503))
+    respx.get(AUDIBLE_UK_URL).mock(return_value=_products(("UK1", "Book", "N", 100)))
+    candidates = search("Book", "", regions=["us", "uk"])
+    assert [c["asin"] for c in candidates] == ["UK1"]
+
+
+@respx.mock
+def test_search_raises_when_every_region_fails():
+    respx.get(AUDIBLE_URL).mock(return_value=httpx.Response(503))
+    respx.get(AUDIBLE_UK_URL).mock(side_effect=httpx.ConnectError("down"))
+    with pytest.raises(MetadataError):
+        search("Book", "", regions=["us", "uk"])
+
+
+def test_search_rejects_unknown_region():
+    with pytest.raises(MetadataError):
+        search("Book", "", regions=["zz"])
+
+
+@respx.mock
+def test_search_defaults_to_configured_regions(monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "METADATA_REGIONS", ["uk"])
+    respx.get(AUDIBLE_UK_URL).mock(return_value=_products(("UK1", "Book", "N", 100)))
+    assert [c["region"] for c in search("Book")] == ["uk"]
+
+
+@respx.mock
+def test_get_chapters_passes_region_to_audnexus():
+    """audnexus only returns a non-US edition's chapters when asked for that
+    region (verified live: UK Fool's Assassin B016P8YESO is a 404 for
+    region=us, 36 chapters for region=uk).
+    """
+    route = respx.get(AUDNEXUS_URL_TMPL.format(asin="UK1"), params={"region": "uk"}).mock(
+        return_value=httpx.Response(
+            200, json={"chapters": [{"title": "One", "startOffsetMs": 0, "lengthMs": 1000}]}
+        )
+    )
+    assert get_chapters("UK1", region="uk") == [{"start_sec": 0.0, "end_sec": 1.0, "title": "One"}]
+    assert route.called
+
+
+@respx.mock
+def test_get_chapters_defaults_to_us_region():
+    route = respx.get(AUDNEXUS_URL_TMPL.format(asin="B001"), params={"region": "us"}).mock(
+        return_value=httpx.Response(200, json={"chapters": []})
+    )
+    get_chapters("B001")
+    assert route.called
+
+
+def test_parse_regions_from_config_string():
+    from app.config import _regions
+
+    assert _regions(" US, uk ,,au") == ["us", "uk", "au"]
+    assert _regions("") == ["us"]

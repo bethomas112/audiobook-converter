@@ -21,8 +21,12 @@ how to run it.
 2. **Look it up** — click "Find this book"; the tool guesses a
    title/author from the filename and searches for candidate matches,
    each with cover art, author, narrator, series, description, and the
-   book's official runtime. Didn't find the right one? Search again with
-   your own title/author instead of the filename-derived guess.
+   book's official runtime. Every Audible store listed in
+   `METADATA_REGIONS` is searched at once (US and UK by default), and each
+   result is tagged with its store, since the same book is often a
+   different recording, with a different narrator, in each one. Didn't
+   find the right one? Search again with your own title/author instead of
+   the filename-derived guess, optionally limited to one store.
 3. **Review** — pick a candidate, or click "None of these" to clear the
    fields back to the filename-derived guess and type your own (every
    field is always editable regardless of what's selected), and confirm.
@@ -150,6 +154,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match | `false` |
 | `MIN_BITRATE_KBPS` | Informational floor (kbps); sources below it still convert (always at their own bitrate), just flagged in the log | `128` |
 | `METADATA_SOURCE` | Named for future alternate sources; only one exists today | `audnexus` |
+| `METADATA_REGIONS` | Audible stores to search, comma-separated, in priority order (`us`, `uk`, `ca`, `au`, `de`, `fr`, `it`, `es`, `in`, `jp`) | `us,uk` |
 | `SILENCE_THRESHOLD_DB` | Noise floor for silence-based chapter detection | `-30dB` |
 | `SILENCE_MIN_DURATION_SEC` | Minimum quiet-gap length to count as a chapter break | `1.5` |
 | `SILENCE_MIN_CHAPTER_SEC` | Minimum resulting chapter length | `120` |
@@ -272,7 +277,10 @@ place: `app/pipeline/tag.py`.
 Candidate search queries Audible's own unauthenticated catalog search
 (no login required); the matched title's chapter data comes from
 [audnexus](https://api.audnex.us), a harmonized, ASIN-keyed metadata API
-built on top of the same catalog. Both are unofficial and could change
+built on top of the same catalog. Audible's catalog is split by store,
+so search covers each region in `METADATA_REGIONS`, and chapter data is
+requested from audnexus for the region the confirmed match came from (a
+UK-only edition's chapters aren't served for the US region). Both are unofficial and could change
 or go away — `METADATA_SOURCE` exists so an alternate source could be
 added later.
 
