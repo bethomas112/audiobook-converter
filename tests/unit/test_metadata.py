@@ -301,3 +301,47 @@ def test_parse_regions_from_config_string():
 
     assert _regions(" US, uk ,,au") == ["us", "uk", "au"]
     assert _regions("") == ["us"]
+
+
+# ---- ranking by closeness to the source file's length ----
+
+from app.pipeline.metadata import rank_by_runtime  # noqa: E402
+
+
+def _c(asin, runtime):
+    return {"asin": asin, "runtime_minutes": runtime}
+
+
+def test_rank_by_runtime_moves_length_matches_to_top_closest_first():
+    cands = [_c("US", 1638), _c("OTHER", 900), _c("UK_FAR", 1735), _c("UK", 1720)]
+    ranked = rank_by_runtime(cands, 1720.9)
+    assert [c["asin"] for c in ranked] == ["UK", "UK_FAR", "US", "OTHER"]
+    assert [c["runtime_match"] for c in ranked] == [True, True, False, False]
+
+
+def test_rank_by_runtime_tolerance_is_larger_of_3_min_and_1_percent():
+    # Short book: 3 min floor wins over 1% (0.6 min).
+    short = rank_by_runtime([_c("A", 63), _c("B", 64)], 60)
+    assert {c["asin"]: c["runtime_match"] for c in short} == {"A": True, "B": False}
+    # Long book: 1% (17.2 min) wins over 3 min.
+    long = rank_by_runtime([_c("A", 1737), _c("B", 1739)], 1720)
+    assert {c["asin"]: c["runtime_match"] for c in long} == {"A": True, "B": False}
+
+
+def test_rank_by_runtime_keeps_relevance_order_among_non_matches():
+    ranked = rank_by_runtime([_c("A", 10), _c("B", None), _c("C", 20), _c("M", 500)], 500)
+    assert [c["asin"] for c in ranked] == ["M", "A", "B", "C"]
+    assert ranked[2]["runtime_match"] is False
+
+
+def test_rank_by_runtime_without_source_length_changes_nothing():
+    cands = [_c("A", 10), _c("B", 500)]
+    ranked = rank_by_runtime(cands, None)
+    assert [c["asin"] for c in ranked] == ["A", "B"]
+    assert all(c["runtime_match"] is False for c in ranked)
+
+
+def test_rank_by_runtime_does_not_mutate_input():
+    cands = [_c("A", 10)]
+    rank_by_runtime(cands, 10)
+    assert "runtime_match" not in cands[0]

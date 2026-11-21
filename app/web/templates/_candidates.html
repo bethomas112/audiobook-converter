@@ -19,12 +19,12 @@
    (asin included) goes blank. #}
 <div class="candidates" id="candidatesWrap" data-candidates-json='{{ job.candidates|tojson }}' data-title-guess="{{ job.title_guess or '' }}" data-author-guess="{{ job.author_guess or '' }}">
   {% for c in job.candidates %}
-  <div class="candidate{% if loop.first %} selected{% endif %}" data-cand="{{ loop.index0 }}">
+  <div class="candidate{% if loop.index0 == job.selected_candidate_index %} selected{% endif %}" data-cand="{{ loop.index0 }}">
     {% if c.cover_url %}<span class="cand-cover"><img src="{{ c.cover_url }}" alt=""></span>
     {% else %}<span class="cand-cover" style="background:{{ c.title|cover_gradient }};">{{ c.title|monogram }}</span>{% endif %}
     <div class="cand-info">
       <div class="cand-title">{{ c.title }}</div>
-      <div class="cand-sub">{% if c.region %}<span class="cand-region" title="Audible {{ region_labels.get(c.region, c.region|upper) }} edition">{{ c.region|upper }}</span>{% endif %}{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}{% if c.runtime_minutes %} &middot; {{ c.runtime_minutes|duration_minutes }}{% endif %}</div>
+      <div class="cand-sub">{% if c.region %}<span class="cand-region" title="Audible {{ region_labels.get(c.region, c.region|upper) }} edition">{{ c.region|upper }}</span>{% endif %}{{ c.author }}{% if c.narrator %} &middot; read by {{ c.narrator }}{% endif %}{% if c.series %} &middot; {{ c.series }}{% if c.series_index %} #{{ c.series_index }}{% endif %}{% endif %}{% if c.year %} &middot; {{ c.year }}{% endif %}{% if c.runtime_minutes %} &middot; {{ c.runtime_minutes|duration_minutes }}{% endif %}{% if c.runtime_match %}<span class="cand-length-match" title="Official runtime is within a few minutes of your file's length">length matches</span>{% endif %}</div>
     </div>
     <span class="cand-radio"></span>
   </div>

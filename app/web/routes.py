@@ -39,6 +39,7 @@ from app.queue import (
     remove_job,
     reorder_queue,
     requeue_job,
+    set_chapters_preview,
     start_job,
     start_new_job,
 )
@@ -354,6 +355,29 @@ def confirm(
     return JSONResponse({"ok": True})
 
 
+@router.post("/jobs/{job_id}/chapters-preview")
+def chapters_preview(
+    job_id: int,
+    request: Request,
+    asin: str = Form(""),
+    region: str = Form(""),
+    _=Depends(require_auth),
+):
+    """Re-point the review step's chapter preview at the candidate just
+    picked (blank asin = "None of these", which clears it). Saved on the
+    job, not just swapped client-side, so a panel re-render keeps it.
+    Returns the re-rendered #chaptersPreview fragment for app.js to swap.
+    """
+    job = Job.get_or_none(Job.id == job_id)
+    if job is None:
+        raise HTTPException(status_code=404)
+    set_chapters_preview(job, asin.strip() or None, region.strip() or None)
+    job.touch_and_save()
+    return templates.TemplateResponse(
+        "_chapters_preview.html", {"request": request, "job": job, "show_hint": True}
+    )
+
+
 @router.post("/jobs/{job_id}/search")
 def search_metadata(
     job_id: int,
@@ -381,7 +405,10 @@ def search_metadata(
     # Blank region = every configured region (same as the automatic search);
     # otherwise just the one region picked in the review form's dropdown.
     try:
-        job.candidates = metadata.search(title, author, regions=[region] if region else None)
+        job.candidates = metadata.rank_by_runtime(
+            metadata.search(title, author, regions=[region] if region else None),
+            job.source_duration_sec / 60 if job.source_duration_sec else None,
+        )
     except metadata.MetadataError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     job.touch_and_save()

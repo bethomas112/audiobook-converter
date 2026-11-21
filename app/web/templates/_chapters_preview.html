@@ -1,0 +1,9 @@
+{# The review step's swappable chapter-preview slot. Always rendered (empty
+   when there's nothing to preview) so app.js has a stable #chaptersPreview
+   to replace after POST /jobs/{id}/chapters-preview. #}
+<div id="chaptersPreview">
+  {% if job.chapters_preview %}
+  {% include "_chapters.html" %}
+  {% if show_hint %}<p class="hint" style="display:block; margin-top:0.5rem;">Exact chapters depend on the match you confirm above.</p>{% endif %}
+  {% endif %}
+</div>

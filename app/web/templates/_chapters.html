@@ -16,7 +16,7 @@
    m:ss under an hour, h:mm:ss (zero-padded) once a chapter starts past the
    1-hour mark, so long audiobooks don't show an unbounded minute count. #}
 <details class="chapters">
-  <summary><span>Chapters &mdash; {{ job.chapters_preview|length }}, from Audible&rsquo;s official listing</span> <span class="chev">&#8250;</span></summary>
+  <summary><span>Chapters &mdash; {{ job.chapters_preview|length }}, from Audible&rsquo;s {{ region_labels.get(job.chapters_preview_region or 'us', (job.chapters_preview_region or '')|upper) }} listing</span> <span class="chev">&#8250;</span></summary>
   <div class="chapter-list">
     {% for ch in job.chapters_preview[:6] %}
     <div class="chapter-row"><span class="chapter-time">{{ ch.start_sec|chapter_timestamp }}</span><span>{{ ch.title }}</span></div>

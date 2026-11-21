@@ -411,6 +411,40 @@
   // data-search-form handler below) can re-wire just the swapped-in
   // candidates fragment without re-binding the confirm form/action buttons
   // a second time.
+  // Re-point the chapter preview at the edition just picked (blank asin =
+  // "None of these", which clears it). The server saves it on the job so a
+  // later panel re-render keeps it. Only the newest request's reply is
+  // applied, so clicking quickly through cards can't leave a slower,
+  // earlier reply showing the wrong edition's chapters.
+  var previewSeq = 0;
+  function refreshChaptersPreview(root, jobId, asin, region) {
+    var slot = root.querySelector("#chaptersPreview");
+    if (!slot || !jobId) return;
+    var seq = ++previewSeq;
+    var fd = new FormData();
+    fd.append("asin", asin || "");
+    fd.append("region", region || "");
+    post("/jobs/" + jobId + "/chapters-preview", fd)
+      .then(function (res) {
+        return res.text();
+      })
+      .then(function (html) {
+        if (seq !== previewSeq) return;
+        var current = root.querySelector("#chaptersPreview");
+        if (!current) return;
+        var wrapper = document.createElement("div");
+        wrapper.innerHTML = html;
+        if (wrapper.firstElementChild) current.replaceWith(wrapper.firstElementChild);
+      })
+      .catch(function () {
+        // Preview only - a failed refresh must not block confirming. Hide
+        // the now-unverified preview rather than leave another edition's up.
+        if (seq !== previewSeq) return;
+        var current = root.querySelector("#chaptersPreview");
+        if (current) current.innerHTML = "";
+      });
+  }
+
   function wireCandidateInteractions(root, candidatesEl) {
     var candidates = [];
     try {
@@ -449,6 +483,7 @@
             else if (field === "author") input.value = authorGuess;
             else input.value = "";
           });
+          refreshChaptersPreview(root, form.getAttribute("data-job-id"), "", "");
           return;
         }
         var idx = parseInt(card.getAttribute("data-cand"), 10);
@@ -458,6 +493,7 @@
           var input = form.querySelector('[name="' + field + '"]');
           if (input) input.value = c[field] || "";
         });
+        refreshChaptersPreview(root, form.getAttribute("data-job-id"), c.asin, c.region);
       });
       card.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " ") {

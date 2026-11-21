@@ -191,6 +191,36 @@ def search(
     return merged
 
 
+# A candidate "matches" the source when its official runtime is within the
+# larger of these of the source's measured length: 3 min covers Audible's
+# whole-minute rounding plus small credit/intro differences on short books,
+# 1% scales for long ones (17 min on a 28h book). Different editions of the
+# same title (abridged, another narrator) are usually off by far more.
+RUNTIME_MATCH_MIN_TOLERANCE = 3.0
+RUNTIME_MATCH_FRACTION = 0.01
+
+
+def rank_by_runtime(candidates: list[dict], source_minutes: float | None) -> list[dict]:
+    """Lift candidates whose runtime matches the source file's length to the
+    top (closest first), leaving the rest in their search-relevance order,
+    and tag each with `runtime_match`. Only ever reorders search results -
+    a wrong title with a coincidentally similar length still has to have
+    been returned by the keyword search to appear at all. Returns new
+    dicts; the input is left untouched.
+    """
+    tolerance = (
+        max(RUNTIME_MATCH_MIN_TOLERANCE, source_minutes * RUNTIME_MATCH_FRACTION) if source_minutes else None
+    )
+    tagged = []
+    for c in candidates:
+        runtime = c.get("runtime_minutes")
+        diff = abs(runtime - source_minutes) if (tolerance is not None and runtime is not None) else None
+        tagged.append(({**c, "runtime_match": diff is not None and diff <= tolerance}, diff))
+    matches = sorted((t for t in tagged if t[0]["runtime_match"]), key=lambda t: t[1])
+    others = [t for t in tagged if not t[0]["runtime_match"]]
+    return [c for c, _ in matches + others]
+
+
 def fetch_cover_bytes(cover_url: str) -> bytes | None:
     if not cover_url:
         return None

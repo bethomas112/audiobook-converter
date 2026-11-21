@@ -67,7 +67,7 @@
         <span class="hint">click any field to change it</span>
       </div>
       <form data-confirm-form data-job-id="{{ job.id }}">
-        {% set c0 = job.candidates[0] if job.candidates else {} %}
+        {% set c0 = job.candidates[job.selected_candidate_index] if job.candidates else {} %}
         <div class="index-card">
           <div class="index-card-title">Staged metadata</div>
           <div class="field-row"><span class="field-label">Title</span><input class="field-value" name="title" value="{{ c0.title or job.title_guess or '' }}"></div>
@@ -83,10 +83,8 @@
           <input type="hidden" name="region" value="{{ c0.region or '' }}">
         </div>
 
-        {% if job.chapters_preview %}
-        {% include "_chapters.html" %}
-        <p class="hint" style="display:block; margin-top:0.5rem;">Exact chapters depend on the match you confirm above.</p>
-        {% endif %}
+        {% set show_hint = True %}
+        {% include "_chapters_preview.html" %}
 
         <div class="actions">
           <button type="submit" class="btn btn-primary">Confirm &amp; queue for conversion</button>

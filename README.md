@@ -24,7 +24,10 @@ how to run it.
    book's official runtime. Every Audible store listed in
    `METADATA_REGIONS` is searched at once (US and UK by default), and each
    result is tagged with its store, since the same book is often a
-   different recording, with a different narrator, in each one. Didn't
+   different recording, with a different narrator, in each one. Results
+   whose official runtime is within 1% or 3 minutes (whichever is larger)
+   of your file's measured length are moved to the top, closest first,
+   and marked "length matches"; the rest keep Audible's relevance order. Didn't
    find the right one? Search again with your own title/author instead of
    the filename-derived guess, optionally limited to one store.
 3. **Review** — pick a candidate, or click "None of these" to clear the
@@ -33,8 +36,10 @@ how to run it.
    The candidate's official runtime is shown next to
    the source files' actual total duration, so a mismatched edition
    (e.g. an abridged match against an unabridged source) is easy to spot
-   before confirming. A preview of the chapters that will be written is
-   also shown (expandable to see the full list, not just the first few).
+   before confirming. A preview of the selected edition's chapters is
+   also shown (expandable to see the full list, not just the first few);
+   it follows whichever candidate you pick, and the conversion screen
+   shows the confirmed edition's.
    Nothing is written until you confirm (or it's configured to
    auto-confirm the top match).
 4. **Convert** — confirming queues the book; one book converts at a
@@ -151,7 +156,7 @@ points — set the actual host-side locations via the `volumes:` section of
 | `SOURCE_CLEANUP_MODE` | `archive`, `delete`, or `keep` | `archive` |
 | `ARCHIVE_RETENTION_DAYS` | Auto-purge window for archived originals; unset/`0` = keep forever | `30` |
 | `AUTO_START_PROCESSING` | Skip the manual "look it up" step and start detection/metadata search immediately | `false` |
-| `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match | `false` |
+| `AUTO_CONFIRM_METADATA` | Skip metadata review, auto-apply the top match (a length-matched edition, when there is one) | `false` |
 | `MIN_BITRATE_KBPS` | Informational floor (kbps); sources below it still convert (always at their own bitrate), just flagged in the log | `128` |
 | `METADATA_SOURCE` | Named for future alternate sources; only one exists today | `audnexus` |
 | `METADATA_REGIONS` | Audible stores to search, comma-separated, in priority order (`us`, `uk`, `ca`, `au`, `de`, `fr`, `it`, `es`, `in`, `jp`) | `us,uk` |

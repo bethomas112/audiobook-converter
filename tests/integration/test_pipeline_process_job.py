@@ -464,3 +464,62 @@ def test_candidate_region_reaches_audnexus_for_preview_and_conversion(isolated_d
 
     assert job.status == Job.STATUS_DONE, job.log
     assert calls and all(c == ("UK1", "uk") for c in calls), calls
+
+
+def test_confirm_replaces_stale_preview_with_confirmed_edition(isolated_dirs, monkeypatch):
+    """The preview is fetched for the top search result at detection time;
+    confirming a different edition must replace it, so the conversion
+    screen shows the chapters of the edition actually being converted."""
+    monkeypatch.setattr(queue_mod, "dispatch_next", lambda: None)
+    calls = []
+
+    def fake_get_chapters(asin, region=None):
+        calls.append((asin, region))
+        return [{"start_sec": 0.0, "end_sec": 5.0, "title": "UK Ch"}]
+
+    monkeypatch.setattr(metadata_mod, "get_chapters", fake_get_chapters)
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        chapters_preview=[{"start_sec": 0.0, "end_sec": 5.0, "title": "US Ch"}],
+    )
+    queue_mod.confirm_metadata(job.id, {"asin": "UK1", "region": "uk", "title": "T"})
+    job = Job.get_by_id(job.id)
+    assert calls == [("UK1", "uk")]
+    assert [c["title"] for c in job.chapters_preview] == ["UK Ch"]
+    assert job.chapters_preview_region == "uk"
+
+
+def test_confirm_without_asin_clears_preview(isolated_dirs, monkeypatch):
+    monkeypatch.setattr(queue_mod, "dispatch_next", lambda: None)
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda *a, **k: [{"title": "x"}])
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        chapters_preview=[{"start_sec": 0.0, "end_sec": 5.0, "title": "US Ch"}],
+    )
+    queue_mod.confirm_metadata(job.id, {"asin": "", "title": "Hand typed"})
+    assert not Job.get_by_id(job.id).chapters_preview
+
+
+def test_detection_ranks_length_matched_edition_first_and_previews_it(isolated_dirs, monkeypatch, huey_immediate):
+    """The auto search's top result decides the detection-time preview
+    (and AUTO_CONFIRM_METADATA's pick), so the edition matching the
+    source's measured length must outrank Audible's relevance #1."""
+    source = isolated_dirs["inbox"] / "Len Book.mp3"
+    make_tone_mp3(source, duration_sec=2.0)  # ~0.03 min
+
+    monkeypatch.setattr(
+        metadata_mod, "search",
+        lambda *a, **k: [
+            {"asin": "FAR", "region": "us", "title": "Len Book", "runtime_minutes": 600},
+            {"asin": "NEAR", "region": "uk", "title": "Len Book", "runtime_minutes": 1},
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda asin, region=None: calls.append((asin, region)) or [])
+
+    job = Job.create(source_path=str(source))
+    queue_mod.start_job(job.id)
+    job = Job.get_by_id(job.id)
+    assert [c["asin"] for c in job.candidates] == ["NEAR", "FAR"]
+    assert job.candidates[0]["runtime_match"] is True
+    assert calls == [("NEAR", "uk")]

@@ -81,7 +81,10 @@ def start_job(job_id: int):
             ) from e
         job.append_log(f"Total source duration: {job.source_duration_sec / 60:.1f} min.")
 
-        candidates = metadata.search(result.title_guess, result.author_guess)
+        candidates = metadata.rank_by_runtime(
+            metadata.search(result.title_guess, result.author_guess),
+            job.source_duration_sec / 60,
+        )
         job.candidates = candidates
         job.append_log(f"Found {len(candidates)} metadata candidate(s).")
 
@@ -91,7 +94,7 @@ def start_job(job_id: int):
             # A preview only - shown during review so the user can see roughly
             # what will be written before confirming. Whichever candidate they
             # actually confirm is what process_job resolves chapters against.
-            job.chapters_preview = metadata.get_chapters(top_asin, top.get("region"))
+            set_chapters_preview(job, top_asin, top.get("region"))
 
         if config.AUTO_CONFIRM_METADATA and candidates:
             job.touch_and_save()
@@ -116,6 +119,15 @@ def _next_queue_order() -> int:
     return (highest.queue_order + 1) if highest else 1
 
 
+def set_chapters_preview(job: Job, asin: str | None, region: str | None):
+    """Point job's chapter preview at one edition (asin + region): fetch
+    its audnexus chapters, or clear the preview when there's no asin (a
+    manual entry has no official listing to preview). Doesn't save."""
+    job.chapters_preview = metadata.get_chapters(asin, region) if asin else None
+    job.chapters_preview_asin = asin or None
+    job.chapters_preview_region = (region or None) if asin else None
+
+
 def confirm_metadata(job_id: int, selected_metadata: dict):
     """Saves the confirmed match and puts the job at the back of the
     conversion queue. Doesn't start converting by itself - dispatch_next()
@@ -124,6 +136,15 @@ def confirm_metadata(job_id: int, selected_metadata: dict):
     """
     job = Job.get_by_id(job_id)
     job.selected_metadata = selected_metadata
+    # The conversion screen shows this preview, so it must be the confirmed
+    # edition's - not whatever ranked first when the search ran. Normally
+    # the review step already fetched it on selection; refetch only if not.
+    asin = selected_metadata.get("asin") or None
+    region = selected_metadata.get("region") or None
+    if (asin, region) != (job.chapters_preview_asin, job.chapters_preview_region) or (
+        not asin and job.chapters_preview
+    ):
+        set_chapters_preview(job, asin, region)
     job.status = Job.STATUS_READY
     job.queue_order = _next_queue_order()
     job.touch_and_save()

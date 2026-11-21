@@ -430,6 +430,16 @@ form into `selected_metadata` and on to `metadata.get_chapters(asin,
 region)` → audnexus's `?region=`. Jobs confirmed before regions existed
 have none and are treated as `us`.
 
+Callers then pass the merged list through `metadata.rank_by_runtime()`
+with the source's probed length (`job.source_duration_sec`, measured in
+`start_job()` before the search): candidates whose `runtime_minutes` is
+within max(3 min, 1%) of it move to the top, closest first, tagged
+`runtime_match` (the "length matches" marker in the UI); everything else
+keeps its relevance order. It only reorders what the keyword search
+returned, so a different title can't be pulled in by length alone. Since
+the top candidate drives both the detection-time chapter preview and
+`AUTO_CONFIRM_METADATA`'s pick, both follow the length-matched edition.
+
 ## Live progress and cancellation
 
 `app/pipeline/ffutil.py:transcode_to_aac_m4b` runs ffmpeg with
@@ -466,7 +476,19 @@ the frontend's job is fetching small fragments and swapping them in.
   match), across all configured regions or the single `region` picked in
   the form's dropdown (an unknown region is a 400) and returns the re-rendered `_candidates.html` fragment
   directly, which `app.js` swaps in place — the one `POST /jobs/{id}/...`
-  route that doesn't just return `{"ok": true}`. `_candidates.html` and
+  route that doesn't just return `{"ok": true}` (along with the next one).
+- `POST /jobs/{id}/chapters-preview` (`asin`, `region`) re-points the
+  chapter preview at the candidate just clicked (blank asin, i.e. "None of
+  these", clears it), saves it on the job (`chapters_preview` plus
+  `chapters_preview_asin`/`_region`, recording which edition it's for) and
+  returns the `#chaptersPreview` fragment (`_chapters_preview.html`) for
+  `app.js` to swap; only the newest request's reply is applied.
+  `confirm_metadata()` refetches it if the confirmed edition still doesn't
+  match, so the processing screen always shows the edition being
+  converted rather than whatever ranked first at detection. On any
+  re-render the review step pre-selects the candidate the preview belongs
+  to (`Job.selected_candidate_index`), so a reload keeps a non-top pick.
+  `_candidates.html` and
   `_chapters.html` are both factored out of `_panel.html` into their own
   partials specifically so their markup (candidate data, including
   `asin` — see the "asin" comment in `_candidates.html` for why that

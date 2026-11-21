@@ -78,6 +78,12 @@ class Job(BaseModel):
     candidates_json = TextField(null=True)
     selected_metadata_json = TextField(null=True)
     chapters_preview_json = TextField(null=True)
+    # Which edition chapters_preview belongs to. The preview is refreshed
+    # whenever a different candidate is picked in the review step (POST
+    # /jobs/{id}/chapters-preview) and again on confirm if it still doesn't
+    # match the confirmed edition, so these record what it was fetched for.
+    chapters_preview_asin = CharField(null=True)
+    chapters_preview_region = CharField(null=True)
 
     # Manual ordering within the conversion queue (ready + the currently
     # processing job). Null for jobs not in that queue. Reordering just
@@ -162,6 +168,18 @@ class Job(BaseModel):
     @chapters_preview.setter
     def chapters_preview(self, value):
         self.chapters_preview_json = json.dumps(value) if value is not None else None
+
+    @property
+    def selected_candidate_index(self) -> int:
+        """Which candidate the review step shows as picked: the one the
+        chapter preview was last fetched for (so a re-render after picking
+        a non-top edition keeps that pick, matching its preview), else the
+        top result."""
+        if self.chapters_preview_asin:
+            for i, c in enumerate(self.candidates):
+                if c.get("asin") == self.chapters_preview_asin:
+                    return i
+        return 0
 
     @property
     def selected_metadata(self):

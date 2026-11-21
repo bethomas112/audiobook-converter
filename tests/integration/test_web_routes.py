@@ -685,3 +685,111 @@ def test_review_panel_offers_region_dropdown(client, monkeypatch):
     assert resp.status_code == 200, resp.text
     assert 'name="region"' in resp.text
     assert "All regions (US, UK)" in resp.text
+
+
+# ---- chapter preview follows the selected edition ----
+
+UK_CHAPTERS = [
+    {"start_sec": 0.0, "end_sec": 30.0, "title": "Opening Credits"},
+    {"start_sec": 30.0, "end_sec": 900.0, "title": "Prologue"},
+]
+
+
+def test_chapters_preview_endpoint_fetches_and_persists_selected_edition(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        chapters_preview=[{"start_sec": 0.0, "end_sec": 1.0, "title": "Stale US Ch"}],
+    )
+    calls = []
+
+    def fake_get_chapters(asin, region=None):
+        calls.append((asin, region))
+        return UK_CHAPTERS
+
+    monkeypatch.setattr(metadata_mod, "get_chapters", fake_get_chapters)
+
+    resp = client.post(f"/jobs/{job.id}/chapters-preview", data={"asin": "UK1", "region": "uk"})
+    assert resp.status_code == 200
+    assert calls == [("UK1", "uk")]
+    assert 'id="chaptersPreview"' in resp.text
+    assert "Opening Credits" in resp.text
+    assert "Stale US Ch" not in resp.text
+    assert "Audible&rsquo;s UK listing" in resp.text
+
+    job = Job.get_by_id(job.id)
+    assert [c["title"] for c in job.chapters_preview] == ["Opening Credits", "Prologue"]
+    assert job.chapters_preview_region == "uk"
+
+
+def test_chapters_preview_endpoint_blank_asin_clears_preview(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM,
+        chapters_preview=[{"start_sec": 0.0, "end_sec": 1.0, "title": "Stale"}],
+    )
+    monkeypatch.setattr(metadata_mod, "get_chapters", lambda *a, **k: pytest.fail("no lookup without asin"))
+
+    resp = client.post(f"/jobs/{job.id}/chapters-preview", data={"asin": ""})
+    assert resp.status_code == 200
+    assert 'id="chaptersPreview"' in resp.text
+    assert "Stale" not in resp.text
+    assert not Job.get_by_id(job.id).chapters_preview
+
+
+def test_chapters_preview_endpoint_404_for_missing_job(client):
+    assert client.post("/jobs/99999/chapters-preview", data={"asin": "A"}).status_code == 404
+
+
+def test_review_panel_always_has_chapters_preview_slot(client):
+    job = Job.create(source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, title_guess="T")
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert 'id="chaptersPreview"' in resp.text
+
+
+def test_preview_label_defaults_to_us_for_older_jobs(client):
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, title_guess="T",
+        chapters_preview=UK_CHAPTERS,
+    )
+    resp = client.get(f"/fragments/panel/{job.id}")
+    assert "Audible&rsquo;s US listing" in resp.text
+
+
+def test_review_panel_reselects_candidate_matching_saved_preview(client):
+    """After picking a non-top edition, a re-render (reload, polling) must
+    keep that edition selected and in the confirm form, not snap back to
+    the top result while showing the other edition's chapters."""
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, title_guess="T",
+        chapters_preview=UK_CHAPTERS, chapters_preview_asin="UK1", chapters_preview_region="uk",
+    )
+    job.candidates = [
+        {"asin": "US1", "region": "us", "title": "T", "narrator": "Elliot Hill"},
+        {"asin": "UK1", "region": "uk", "title": "T", "narrator": "Lee Maxwell-Simpson"},
+    ]
+    job.save()
+    html = client.get(f"/fragments/panel/{job.id}").text
+    assert 'class="candidate selected" data-cand="1"' in html
+    assert 'name="asin" value="UK1"' in html
+    assert 'name="region" value="uk"' in html
+
+
+def test_search_endpoint_ranks_by_job_source_length_and_tags_matches(client, monkeypatch):
+    from app.pipeline import metadata as metadata_mod
+
+    job = Job.create(
+        source_path="/x", status=Job.STATUS_AWAITING_METADATA_CONFIRM, source_duration_sec=1720.9 * 60,
+    )
+    monkeypatch.setattr(
+        metadata_mod, "search",
+        lambda *a, **k: [
+            {"asin": "US1", "region": "us", "title": "Fool's Assassin", "runtime_minutes": 1638},
+            {"asin": "UK1", "region": "uk", "title": "Fool's Assassin", "runtime_minutes": 1720},
+        ],
+    )
+    resp = client.post(f"/jobs/{job.id}/search", data={"title": "Fool's Assassin"})
+    assert [c["asin"] for c in Job.get_by_id(job.id).candidates] == ["UK1", "US1"]
+    assert resp.text.count('class="cand-length-match"') == 1
